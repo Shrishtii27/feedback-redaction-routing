@@ -285,8 +285,8 @@ export default function App() {
               <Shield className="w-6 h-6 text-white" id="app-logo-shield" />
             </div>
             <div>
-              <h1 className="text-lg font-bold font-display text-white tracking-tight leading-tight">GuardRail</h1>
-              <p className="text-xs text-slate-400 font-mono">Feedback PII Scrubber & Router // Node-Express Microservice</p>
+              <h1 className="text-lg font-bold font-display text-white tracking-tight leading-tight">GuardRail Compliance Portal</h1>
+              <p className="text-xs text-slate-400 font-mono">Healthcare & Fintech Feedback Ingestion Gateway (HIPAA & PCI-DSS Compliant)</p>
             </div>
           </div>
           <div className="flex items-center space-x-3">
@@ -353,10 +353,10 @@ export default function App() {
                 <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-xl">
                   <h2 className="text-lg font-bold font-display text-white mb-2 flex items-center space-x-2">
                     <Activity className="w-5 h-5 text-indigo-400" />
-                    <span>Customer Portal Feedback Submission</span>
+                    <span>Inbound Portal Feedback Ingestion</span>
                   </h2>
                   <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                    Test how our microservice processes submissions. Select a preset below containing various sensitive data, or type your own feedback containing PII into the portal text field.
+                    Simulate customer feedback submissions for a major healthcare & fintech provider. Raw text is automatically sanitized to remove credit card numbers, phone numbers, and health IDs, then routed based on sentiment.
                   </p>
  
                   {/* Preset Quick Selectors */}
@@ -410,6 +410,37 @@ export default function App() {
                       )}
                     </button>
                   </form>
+                </div>
+
+                {/* Healthcare & Fintech Compliance Gateways Board */}
+                <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-xl space-y-4">
+                  <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider flex items-center space-x-2">
+                    <Shield className="w-5 h-5 text-indigo-400" />
+                    <span>Compliance Gateways & Rulesets</span>
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] leading-relaxed">
+                    <div className="bg-slate-950/40 p-3.5 rounded-xl border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-slate-200">HIPAA Standard</span>
+                        <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[8px] font-bold border border-emerald-500/20">ACTIVE</span>
+                      </div>
+                      <p className="text-slate-400">Scrubs Social Security Numbers, patient names, and alphanumeric member IDs.</p>
+                    </div>
+                    <div className="bg-slate-950/40 p-3.5 rounded-xl border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-slate-200">PCI-DSS Standard</span>
+                        <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[8px] font-bold border border-emerald-500/20">ACTIVE</span>
+                      </div>
+                      <p className="text-slate-400">Detects and redacts Visa, MasterCard, Amex, and credit card number sequences.</p>
+                    </div>
+                    <div className="bg-slate-950/40 p-3.5 rounded-xl border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-slate-200">GDPR & CCPA</span>
+                        <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[8px] font-bold border border-emerald-500/20">ACTIVE</span>
+                      </div>
+                      <p className="text-slate-400">Scans for personal emails, telephone numbers, and home/physical addresses.</p>
+                    </div>
+                  </div>
                 </div>
  
                 {/* Pipeline visualizer progress board */}
