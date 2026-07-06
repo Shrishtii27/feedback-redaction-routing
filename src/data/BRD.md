@@ -1,76 +1,111 @@
 # Business Requirements Document (BRD)
-## Project: Production-Grade Customer Feedback Scrubbing & Sentiment Routing Microservice
 
-### 1. Problem Statement
-A major healthcare and fintech client receives thousands of daily customer feedback submissions through its web portal. A significant percentage of these submissions contain highly sensitive Personally Identifiable Information (PII) and Protected Health Information (PHI), such as:
-* Credit card numbers (PCI data)
-* Social Security Numbers (SSN) / Health IDs (HIPAA data)
-* Phone numbers and email addresses (PII data)
-
-Processing and storing this raw feedback in general-purpose internal systems (such as marketing lists or standard support backlogs) presents extreme compliance and legal risks under GDPR, CCPA, PCI-DSS, and HIPAA regulations. 
-
-### 2. Solution Overview
-The client requires a robust, production-grade ingestion microservice that:
-1. **Redacts PII/PHI**: Automatically scrubs sensitive strings, replacing them with a standardized `[REDACTED]` token. It must handle composite cases containing multiple categories of PII in a single submission.
-2. **Analyzes Sentiment**: Classifies the sentiment of the scrubbed message (Positive, Negative, or Neutral).
-3. **Routes Clean Feedback**: Stores the cleaned data into distinct destination databases depending on sentiment:
-   * **Positive Sentiment** -> Routed to the **Marketing Database** (for testimonials and promotional opportunities).
-   * **Negative Sentiment** -> Routed to the **Priority Support Database** (for urgent remediation and ticketing).
-   * **Neutral Sentiment** -> Routed to the **General Archive Database** (for product analytics and standard tracking).
+**Project Title**: GuardRail - Open Source Customer Feedback Redaction & Sentiment Routing Microservice  
+**Document Version**: 2.0.0  
+**Target Audience**: DevOps Engineers, Security Officers, Compliance Managers, and Developers  
 
 ---
 
-### 3. Success Metrics
-* **Scrubbing Precision & Recall (100% Target)**: All credit card numbers, SSNs, phone numbers, and emails must be successfully scrubbed. Composite cases must not leave partial fields.
-* **Sentiment Routing Accuracy (>95%)**: High-sentiment messages (strongly positive/negative) must be correctly categorized to prevent misrouting.
-* **API Availability & Performance**:
-  * Edge cases (empty payload, invalid JSON) must be handled gracefully with 400 Bad Request, preventing server crashes.
-  * Integration test suite with 100% passing tests.
-* **Security & Privacy**: Original feedback containing raw PII must never be stored in persistent databases. Only the redacted/scrubbed version is saved.
+## 1. Executive Summary
+A major healthcare and fintech platform receives thousands of daily customer feedback submissions through its web portals. A significant percentage of this inbound data contains highly sensitive Personally Identifiable Information (PII) and Protected Health Information (PHI) such as Credit Card numbers, Social Security Numbers (SSN), Health IDs, phone numbers, and email addresses. 
+
+Storing or exposing this raw data in general-purpose downstream systems (e.g., Marketing, Product Analytics, or General Support) breaches regulatory standards under **GDPR, CCPA, HIPAA, and PCI-DSS**. 
+
+**GuardRail** is a lightweight, high-performance Node.js / Express microservice that solves this problem by:
+1. **Redacting PII/PHI**: Scrubbing sensitive data patterns into a standardized `[REDACTED]` token before storage.
+2. **Obscuring Audit Trails**: Storing masked versions of the text (e.g., `****-****-****-1234` or `j***e@g***.com`) for operators to verify context without exposing compliance-violating data.
+3. **Sentiment-Based Routing**: Analyzing feedback tone and routing clean data to specific database channels.
+4. **Deploying Easily**: Operating completely offline using local rule-based heuristics out-of-the-box, with optional OpenAI/Ollama-compatible LLM support.
 
 ---
 
-### 4. Explicit Data Boundaries (PII Classification)
+## 2. Project Scope
 
-The microservice utilizes a hybrid redaction engine: **Deterministic Regex** for high-precision pattern matches and **Heuristic AI (Open Source LLM / Offline Fallback)** for contextual/implied PII.
+### In-Scope
+* **Regex Filtering**: Deterministic scrubbing of Credit Card numbers, Phone numbers, Email addresses, and Health ID/SSN patterns.
+* **Contextual AI Scrubbing**: Natural Language Processing (NLP) heuristics and Open Source LLM connections to redact names, addresses, and IP addresses.
+* **Sentiment Assessment**: Evaluation of user tone into Positive, Negative, or Neutral classes.
+* **Simulated DB Routing**: Automated data ingestion and division into separate JSON databases.
+* **Automated Regression Testing**: Coverage for edge cases, composite PII payloads, and empty validations using Vitest and Supertest.
 
-| Data Type | Definition & Format | Detection Strategy |
-| :--- | :--- | :--- |
-| **Credit Card (PCI)** | 13-16 digit numbers matching Visa, MasterCard, Amex formats. | Deterministic Regex (Luhn-adjacent formats) |
-| **Email Address** | Standard RFC 5322 electronic mail address formats. | Deterministic Regex |
-| **Phone Number** | Formats including US 10-digit, international prefixes, parentheses, and dashes. | Deterministic Regex |
-| **Health ID / SSN** | 9-digit hyphenated US SSN (`AAA-GG-SSSS`) or standard 10-character Alpha-Numeric Medical ID. | Deterministic Regex + Contextual AI |
-| **Contextual PII** | Full names, home/physical addresses, IP addresses, and explicit credentials. | Heuristic AI (Open Source LLM / Local Fallback) |
+### Out-of-Scope
+* Persistent production databases (simulated locally via JSON files).
+* Multi-user role management and authentication.
+* Out-of-band notifications (e.g., direct email alerts for negative feedback).
 
 ---
 
-### 5. Flow Diagram / Architecture
+## 3. Data Processing Architecture & Flow
+
+The GuardRail pipeline processes inbound text packages sequentially to guarantee that no unscrubbed PII ever touches persistent storage.
+
 ```
-[ Customer Submission ] 
-         │
-         ▼
- ┌──────────────┐
- │ POST /api/   │ ──( If empty body )──► [ 400 Bad Request ]
- │  feedback    │
- └───────┬──────┘
-         │
-         ▼ (Step 1: Deterministic Scrubbing)
- ┌──────────────────────────────────────┐
- │ Regex Engines (CC, Emails, Phones)   │
- └───────┬──────────────────────────────┘
-         │
-         ▼ (Step 2: Contextual Scrubbing & Sentiment)
- ┌──────────────────────────────────────┐
- │ Open Source LLM / Local Analyzer     │
- └───────┬──────────────────────────────┘
-         │
-         ├──► [ Redacted Output String ]
-         ▼
- ┌──────────────────────────────────────┐
- │ Sentiment-Based Routing Engine       │
- └───────┬──────────────────────────────┘
-         │
-         ├─► [Sentiment: Positive] ────► [ Marketing Database ]
-         ├─► [Sentiment: Negative] ────► [ Priority Support Database ]
-         └─► [Sentiment: Neutral]  ────► [ General Archive Database ]
+[Inbound Portal Feedback POST] ──► (Is Empty?) ──► [400 Bad Request]
+          │
+          ▼ (No)
+┌──────────────────────────────────────────┐
+│ Phase 1: Deterministic Regex Filter      │
+│ (Scrub PCI Cards, SSNs, Emails, Phones)  │
+└─────────────────┬────────────────────────┘
+                  │
+                  ▼
+┌──────────────────────────────────────────┐
+│ Create Masked Original Audit Summary     │
+└─────────────────┬────────────────────────┘
+                  │
+                  ▼
+┌──────────────────────────────────────────┐
+│ Phase 2: Heuristic AI / Local Fallback   │
+│ (Redact names/addresses, sentiment)      │
+└─────────────────┬────────────────────────┘
+                  │
+                  ▼
+┌──────────────────────────────────────────┐
+│ Sentiment-Based Routing Engine           │
+└──────┬──────────┬──────────┬─────────────┘
+       │          │          │
+       ├─► (Pos) ─┼──────────┼─► [Marketing DB]
+       ├─► (Neg) ─┼──────────┼─► [Priority Support DB]
+       └─► (Neu) ─┼──────────┼─► [General Archive DB]
 ```
+
+---
+
+## 4. Technical Specifications
+
+### A. Data Classification & Redaction Rules
+
+| Data Category | Formats Covered | Strategy | Action / Token Replacement |
+| :--- | :--- | :--- | :--- |
+| **Credit Cards (PCI)** | 13-16 digit numbers with spaces or hyphens. | Deterministic Regex | `[REDACTED]` (Masked: `****-****-****-4444`) |
+| **Emails** | RFC 5322 standard electronic mail formats. | Deterministic Regex | `[REDACTED]` (Masked: `j***e@g***.com`) |
+| **Phone Numbers** | Standard US 10-digit, international formats. | Deterministic Regex | `[REDACTED]` (Masked: `(***) ***-7890`) |
+| **SSN / Health IDs** | Hyphenated SSNs (`AAA-GG-SSSS`) or 10-char Health IDs. | Deterministic Regex | `[REDACTED]` (Masked: `***-**-6789`) |
+| **Contextual PII** | Full names, addresses, credentials, IP addresses. | LLM / Heuristics | `[REDACTED]` (Masked: Removed) |
+
+### B. Routing Destination Mappings
+
+Feedback is mapped dynamically to simulated database partitions based on sentiment outcomes:
+
+- **Priority Support Database** (Negative sentiment: bugs, payment crashes, frustrated tones)
+- **Marketing Database** (Positive sentiment: praise, compliments, success testimonials)
+- **General Archive Database** (Neutral sentiment: product suggestions, inquiries, standard statements)
+
+---
+
+## 5. Compliance & Security Standards
+* **Data Minimization**: Raw, unscrubbed PII must never be stored in files or database columns.
+* **Masked Audit Trails**: Operators can view structural/masked PII representations to understand message context without seeing raw values.
+* **Dependency Audits**: Removed proprietary SDKs (e.g., `@google/genai`) to ensure license compliance and eliminate vendor lock-in.
+
+---
+
+## 6. Testing & Quality Assurance
+
+All features must pass the automated regression suite powered by **Vitest** and **Supertest**. 
+
+### Critical Assertions Verified:
+1. **Rule Redaction Verification**: Ensures credit card numbers and email strings are replaced.
+2. **Routing Correctness**: Confirms positive sentiment lands in marketing, negative in priority support, and neutral in general archive.
+3. **Validation Verification**: Asserts that sending an empty string or null body returns `400 Bad Request` and does not crash the Express app.
+4. **Mock Dataset Verification**: Dynamically loads `src/data/sample_data.json` and runs all samples sequentially to verify end-to-end routing integrity.
