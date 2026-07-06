@@ -8,12 +8,13 @@ import { app } from '../../../server';
 describe('Customer Feedback Ingestion Pipeline & Routing API', () => {
   beforeAll(async () => {
     // Ensure simulated DB is cleared or set to initial state for testing
-    await request(app).post('/api/databases/clear');
+    await request(app).post('/api/feedback/clear');
   });
 
   it('should successfully ingest, redact credit card PII, and route positive feedback (Payload Test)', async () => {
     const payload = {
-      feedback: 'I absolutely love this new banking interface! Excellent speed, though I was worried when I accidentally pasted my card number 4111-2222-3333-4444 into the chat. But overall, it is amazing!'
+      feedbackText: 'I absolutely love this new banking interface! Excellent speed, though I was worried when I accidentally pasted my card number 4111-2222-3333-4444 into the chat. But overall, it is amazing!',
+      clientName: 'Web Portal'
     };
 
     const response = await request(app)
@@ -25,32 +26,37 @@ describe('Customer Feedback Ingestion Pipeline & Routing API', () => {
     expect(response.status).toBe(200);
 
     // Verify response structure
-    expect(response.body).toHaveProperty('id');
-    expect(response.body).toHaveProperty('redactedText');
-    expect(response.body).toHaveProperty('sentiment');
-    expect(response.body).toHaveProperty('routedTo');
-    expect(response.body).toHaveProperty('redactedPIICount');
+    expect(response.body).toHaveProperty('status', 'success');
+    expect(response.body).toHaveProperty('data');
+    
+    const data = response.body.data;
+    expect(data).toHaveProperty('submissionId');
+    expect(data).toHaveProperty('redactedText');
+    expect(data).toHaveProperty('sentiment');
+    expect(data).toHaveProperty('destinationDatabase');
+    expect(data).toHaveProperty('piiDetected');
 
     // Verify PII is redacted in the clean feedback
-    expect(response.body.redactedText).not.toContain('4111-2222-3333-4444');
-    expect(response.body.redactedText).toContain('[REDACTED]');
+    expect(data.redactedText).not.toContain('4111-2222-3333-4444');
+    expect(data.redactedText).toContain('[REDACTED_CARD]');
 
     // Verify routing is correct
-    expect(response.body.sentiment).toBe('positive');
-    expect(response.body.routedTo).toBe('Marketing');
-    expect(response.body.redactedPIICount).toBeGreaterThanOrEqual(1);
+    expect(data.sentiment).toBe('Positive');
+    expect(data.destinationDatabase).toBe('Marketing Database');
+    expect(data.piiDetected.length).toBeGreaterThanOrEqual(1);
 
-    // Query databases to ensure it was saved to the marketing database
-    const dbRes = await request(app).get('/api/databases');
-    expect(dbRes.status).toBe(200);
-    expect(dbRes.body.marketing.length).toBe(1);
-    expect(dbRes.body.marketing[0].redactedText).toContain('[REDACTED]');
-    expect(dbRes.body.marketing[0].redactedText).not.toContain('4111-2222-3333-4444');
+    // Query history to ensure it was saved
+    const historyRes = await request(app).get('/api/feedback/history');
+    expect(historyRes.status).toBe(200);
+    expect(historyRes.body.data.length).toBe(1);
+    expect(historyRes.body.data[0].redactedText).toContain('[REDACTED_CARD]');
+    expect(historyRes.body.data[0].redactedText).not.toContain('4111-2222-3333-4444');
   });
 
   it('should successfully ingest, redact composite PII, and route negative feedback (Composite Case)', async () => {
     const payload = {
-      feedback: 'The portal is completely broken. I spent 2 hours trying to contact help at srivastava123.shrishti@gmail.com or by phone 123-456-7890. This is terrible service.'
+      feedbackText: 'The portal is completely broken. I spent 2 hours trying to contact help at srivastava123.shrishti@gmail.com or by phone 123-456-7890. This is terrible service.',
+      clientName: 'iOS App'
     };
 
     const response = await request(app)
@@ -59,30 +65,28 @@ describe('Customer Feedback Ingestion Pipeline & Routing API', () => {
       .set('Accept', 'application/json');
 
     expect(response.status).toBe(200);
-    expect(response.body.sentiment).toBe('negative');
-    expect(response.body.routedTo).toBe('Priority Support');
+    
+    const data = response.body.data;
+    expect(data.sentiment).toBe('Negative');
+    expect(data.destinationDatabase).toBe('Priority Support Database');
 
     // Both email and phone must be redacted
-    expect(response.body.redactedText).not.toContain('srivastava123.shrishti@gmail.com');
-    expect(response.body.redactedText).not.toContain('123-456-7890');
-    expect(response.body.redactedText).toContain('[REDACTED]');
-    expect(response.body.redactedPIICount).toBeGreaterThanOrEqual(2);
-
-    // Query databases to ensure it was saved to the priority support database
-    const dbRes = await request(app).get('/api/databases');
-    expect(dbRes.body.prioritySupport.length).toBe(1);
-    expect(dbRes.body.prioritySupport[0].routedTo).toBe('Priority Support');
+    expect(data.redactedText).not.toContain('srivastava123.shrishti@gmail.com');
+    expect(data.redactedText).not.toContain('123-45-6789');
+    expect(data.redactedText).toContain('[REDACTED_EMAIL]');
+    expect(data.redactedText).toContain('[REDACTED_PHONE]');
+    expect(data.piiDetected.length).toBeGreaterThanOrEqual(2);
   });
 
   it('should return a 400 Bad Request for an empty feedback payload (Edge Case Test)', async () => {
     const response = await request(app)
       .post('/api/feedback')
-      .send({ feedback: '' })
+      .send({ feedbackText: '', clientName: 'Android App' })
       .set('Accept', 'application/json');
 
     expect(response.status).toBe(400);
     expect(response.body).toHaveProperty('error');
-    expect(response.body.error).toContain('is required');
+    expect(response.body.error).toContain('Validation failed');
   });
 
   it('should return a 400 Bad Request for missing body (Edge Case Test)', async () => {
@@ -97,7 +101,7 @@ describe('Customer Feedback Ingestion Pipeline & Routing API', () => {
 
   it('should process and route sample_data.json correctly (Sample Data Test)', async () => {
     // Clear databases first
-    await request(app).post('/api/databases/clear');
+    await request(app).post('/api/feedback/clear');
 
     const filePath = path.join(process.cwd(), 'src', 'data', 'sample_data.json');
     const fileContent = fs.readFileSync(filePath, 'utf8');
@@ -106,41 +110,44 @@ describe('Customer Feedback Ingestion Pipeline & Routing API', () => {
     for (const sample of samples) {
       const response = await request(app)
         .post('/api/feedback')
-        .send({ feedback: sample.feedback })
+        .send({ feedbackText: sample.feedback, clientName: 'Web Portal' })
         .set('Accept', 'application/json');
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('id');
-      expect(response.body).toHaveProperty('redactedText');
-      expect(response.body).toHaveProperty('sentiment');
-      expect(response.body).toHaveProperty('routedTo');
+      expect(response.body.status).toBe('success');
+      
+      const data = response.body.data;
+      expect(data).toHaveProperty('submissionId');
+      expect(data).toHaveProperty('redactedText');
+      expect(data).toHaveProperty('sentiment');
+      expect(data).toHaveProperty('destinationDatabase');
       
       // Ensure PII is redacted if there was PII
       if (sample.feedback.includes('4111-2222-3333-4444')) {
-        expect(response.body.redactedText).not.toContain('4111-2222-3333-4444');
-        expect(response.body.redactedText).toContain('[REDACTED]');
+        expect(data.redactedText).not.toContain('4111-2222-3333-4444');
+        expect(data.redactedText).toContain('[REDACTED_CARD]');
       }
       if (sample.feedback.includes('test.user@gmail.com')) {
-        expect(response.body.redactedText).not.toContain('test.user@gmail.com');
-        expect(response.body.redactedText).toContain('[REDACTED]');
+        expect(data.redactedText).not.toContain('test.user@gmail.com');
+        expect(data.redactedText).toContain('[REDACTED_EMAIL]');
       }
       if (sample.feedback.includes('123-45-6789')) {
-        expect(response.body.redactedText).not.toContain('123-45-6789');
-        expect(response.body.redactedText).toContain('[REDACTED]');
+        expect(data.redactedText).not.toContain('123-45-6789');
+        expect(data.redactedText).toContain('[REDACTED_HEALTH_ID]');
       }
       if (sample.feedback.includes('555-891-2045')) {
-        expect(response.body.redactedText).not.toContain('555-891-2045');
-        expect(response.body.redactedText).toContain('[REDACTED]');
+        expect(data.redactedText).not.toContain('555-891-2045');
+        expect(data.redactedText).toContain('[REDACTED_PHONE]');
       }
     }
 
-    // Retrieve database state and verify entries are stored
-    const dbRes = await request(app).get('/api/databases');
-    expect(dbRes.status).toBe(200);
+    // Retrieve database stats and verify telemetry matches
+    const statsRes = await request(app).get('/api/feedback/stats');
+    expect(statsRes.status).toBe(200);
     
-    // There are 4 samples: 1 Priority Support, 1 Marketing, 2 General Archive
-    expect(dbRes.body.prioritySupport.length).toBe(1);
-    expect(dbRes.body.marketing.length).toBe(1);
-    expect(dbRes.body.generalArchive.length).toBe(2);
+    // There are 4 samples: 1 Priority Support, 1 Marketing, 2 Priority Support (since neutral goes there)
+    expect(statsRes.body.totalSubmissions).toBe(4);
+    expect(statsRes.body.marketingCount).toBe(1);
+    expect(statsRes.body.priorityCount).toBe(3);
   });
 });

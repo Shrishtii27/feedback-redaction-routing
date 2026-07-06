@@ -1,76 +1,78 @@
-{
-  "prioritySupport": [
-    {
-      "id": "fb_1783337600905_b5o1w",
-      "originalTextSummary": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is ****-****-****-4444 and my email is t***r@g***.com. Please resolve this immediately!",
-      "redactedText": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is [REDACTED] and my email is [REDACTED]. Please resolve this immediately!",
-      "sentiment": "negative",
-      "sentimentScores": {
-        "positive": 0.05,
-        "negative": 0.9,
-        "neutral": 0.05
+[
+  {
+    "submissionId": "fb-9tsipkeck",
+    "clientName": "Web Portal",
+    "originalText": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
+    "originalTextSummary": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
+    "redactedText": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
+    "sentiment": "Neutral",
+    "sentimentScore": 0,
+    "destinationDatabase": "Priority Support Database",
+    "piiDetected": [],
+    "timestamp": "2026-07-06T11:57:42.912Z"
+  },
+  {
+    "submissionId": "fb-ntm0vahhc",
+    "clientName": "Web Portal",
+    "originalText": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN 123-45-6789 in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
+    "originalTextSummary": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN ***-**-6789 in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
+    "redactedText": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN [REDACTED_HEALTH_ID] in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
+    "sentiment": "Positive",
+    "sentimentScore": 0.6,
+    "destinationDatabase": "Marketing Database",
+    "piiDetected": [
+      {
+        "type": "HEALTH_ID",
+        "value": "123-45-6789",
+        "method": "regex"
+      }
+    ],
+    "timestamp": "2026-07-06T11:57:42.911Z"
+  },
+  {
+    "submissionId": "fb-51tjrc4us",
+    "clientName": "Web Portal",
+    "originalText": "Hello, I am a patient checking if member ID AB123456CD is valid for this portal. You can contact me back on my home phone 555-891-2045 during business hours. Thank you.",
+    "originalTextSummary": "Hello, I am a patient checking if member ID AB******CD is valid for this portal. You can contact me back on my home phone (***) ***-2045 during business hours. Thank you.",
+    "redactedText": "Hello, I am a patient checking if member ID [REDACTED_HEALTH_ID] is valid for this portal. You can contact me back on my home phone [REDACTED_PHONE] during business hours. Thank you.",
+    "sentiment": "Neutral",
+    "sentimentScore": 0,
+    "destinationDatabase": "Priority Support Database",
+    "piiDetected": [
+      {
+        "type": "PHONE",
+        "value": "555-891-2045",
+        "method": "regex"
       },
-      "redactedPIICount": 2,
-      "detectedCategories": [
-        "Email",
-        "Credit Card"
-      ],
-      "routedTo": "Priority Support",
-      "timestamp": "2026-07-06T11:33:20.905Z"
-    }
-  ],
-  "marketing": [
-    {
-      "id": "fb_1783337600906_f396r",
-      "originalTextSummary": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN ***-**-6789 in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
-      "redactedText": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN [REDACTED] in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
-      "sentiment": "positive",
-      "sentimentScores": {
-        "positive": 0.9,
-        "negative": 0.05,
-        "neutral": 0.05
+      {
+        "type": "HEALTH_ID",
+        "value": "AB123456CD",
+        "method": "regex"
+      }
+    ],
+    "timestamp": "2026-07-06T11:57:42.910Z"
+  },
+  {
+    "submissionId": "fb-txgw4bhwi",
+    "clientName": "Web Portal",
+    "originalText": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is 4111-2222-3333-4444 and my email is test.user@gmail.com. Please resolve this immediately!",
+    "originalTextSummary": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is ****-****-****-4444 and my email is t***r@g***.com. Please resolve this immediately!",
+    "redactedText": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is [REDACTED_CARD] and my email is [REDACTED_EMAIL]. Please resolve this immediately!",
+    "sentiment": "Negative",
+    "sentimentScore": -0.8,
+    "destinationDatabase": "Priority Support Database",
+    "piiDetected": [
+      {
+        "type": "EMAIL",
+        "value": "test.user@gmail.com",
+        "method": "regex"
       },
-      "redactedPIICount": 1,
-      "detectedCategories": [
-        "Health ID / SSN"
-      ],
-      "routedTo": "Marketing",
-      "timestamp": "2026-07-06T11:33:20.906Z"
-    }
-  ],
-  "generalArchive": [
-    {
-      "id": "fb_1783337600907_fty7z",
-      "originalTextSummary": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
-      "redactedText": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
-      "sentiment": "neutral",
-      "sentimentScores": {
-        "positive": 0.1,
-        "negative": 0.1,
-        "neutral": 0.8
-      },
-      "redactedPIICount": 0,
-      "detectedCategories": [],
-      "routedTo": "General Archive",
-      "timestamp": "2026-07-06T11:33:20.907Z"
-    },
-    {
-      "id": "fb_1783337600905_g71s4",
-      "originalTextSummary": "Hello, I am a patient checking if member ID AB******CD is valid for this portal. You can contact me back on my home phone (***) ***-2045 during business hours. Thank you.",
-      "redactedText": "Hello, I am a patient checking if member ID [REDACTED] is valid for this portal. You can contact me back on my home phone [REDACTED] during business hours. Thank you.",
-      "sentiment": "neutral",
-      "sentimentScores": {
-        "positive": 0.1,
-        "negative": 0.1,
-        "neutral": 0.8
-      },
-      "redactedPIICount": 2,
-      "detectedCategories": [
-        "Phone Number",
-        "Health ID / SSN"
-      ],
-      "routedTo": "General Archive",
-      "timestamp": "2026-07-06T11:33:20.905Z"
-    }
-  ]
-}
+      {
+        "type": "CREDIT_CARD",
+        "value": "4111-2222-3333-4444",
+        "method": "regex"
+      }
+    ],
+    "timestamp": "2026-07-06T11:57:42.910Z"
+  }
+]

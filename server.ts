@@ -27,39 +27,40 @@ if (!fs.existsSync(dataDir)) {
 // Ingestion API: Recieves feedback, redacts PII, sentiment-analyzes and routes
 app.post('/api/feedback', async (req, res) => {
   try {
-    const { feedback } = req.body;
+    const { feedbackText, clientName } = req.body;
 
     // Validate request
-    if (!feedback || typeof feedback !== 'string' || feedback.trim() === '') {
+    if (!feedbackText || typeof feedbackText !== 'string' || feedbackText.trim().length < 3) {
       return res.status(400).json({
-        error: 'Feedback message is required and cannot be empty.'
+        error: 'Validation failed: feedbackText is empty or malformed'
       });
     }
 
-    // Phase 2 Step 1: Deterministic regex scrubbing (catches credit cards, emails, phones)
-    const regexResult = regexScrub(feedback);
+    const channel = clientName || 'Web Portal';
 
-    // Phase 2 Step 2: Contextual AI scrubbing and Sentiment Analysis using Open Source LLM / Fallback
+    // Phase 1: Deterministic regex scrubbing
+    const regexResult = regexScrub(feedbackText);
+
+    // Phase 2: Contextual AI scrubbing and Sentiment Analysis using Open Source LLM / Fallback
     const aiResult = await analyzeFeedback(regexResult.cleanText);
 
     // Determine the database routing destination based on sentiment
-    let routedTo: 'Priority Support' | 'Marketing' | 'General Archive' = 'General Archive';
-    if (aiResult.sentiment === 'negative') {
-      routedTo = 'Priority Support';
-    } else if (aiResult.sentiment === 'positive') {
-      routedTo = 'Marketing';
-    }
+    const destinationDatabase = aiResult.sentiment === 'Positive' ? 'Marketing Database' : 'Priority Support Database';
 
-    // Assemble the clean, compliance-safe entry
+    // Combine piiDetected items
+    const piiDetected = [...regexResult.piiDetected, ...aiResult.piiDetected];
+
+    // Assemble the clean, compliance-safe entry matching target app
     const entry: FeedbackEntry = {
-      id: `fb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      originalTextSummary: maskOriginalText(feedback), // Masked safely for operators, never stores raw PII
+      submissionId: `fb-${Math.random().toString(36).substring(2, 11)}`,
+      clientName: channel,
+      originalText: feedbackText,
+      originalTextSummary: maskOriginalText(feedbackText),
       redactedText: aiResult.redactedText,
       sentiment: aiResult.sentiment,
-      sentimentScores: aiResult.sentimentScores,
-      redactedPIICount: regexResult.redactedCount + aiResult.detectedCategories.length,
-      detectedCategories: Array.from(new Set([...regexResult.categories, ...aiResult.detectedCategories])),
-      routedTo,
+      sentimentScore: aiResult.sentimentScore,
+      destinationDatabase,
+      piiDetected,
       timestamp: new Date().toISOString()
     };
 
@@ -67,7 +68,10 @@ app.post('/api/feedback', async (req, res) => {
     saveFeedbackEntry(entry);
 
     // Return the response as required
-    return res.status(200).json(entry);
+    return res.status(200).json({
+      status: 'success',
+      data: entry
+    });
   } catch (err: any) {
     console.error('Error in feedback ingestion endpoint:', err);
     return res.status(500).json({
@@ -77,21 +81,67 @@ app.post('/api/feedback', async (req, res) => {
   }
 });
 
-// GET simulated databases
-app.get('/api/databases', (req, res) => {
+// GET database history logs
+app.get('/api/feedback/history', (req, res) => {
   try {
     const db = readDb();
-    res.json(db);
+    res.json({
+      status: 'success',
+      data: db
+    });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to read database', message: err.message });
   }
 });
 
-// CLEAR simulated databases
-app.post('/api/databases/clear', (req, res) => {
+// GET database stats telemetry
+app.get('/api/feedback/stats', (req, res) => {
   try {
-    const emptyDb = clearDb();
-    res.json({ message: 'Databases cleared successfully', databases: emptyDb });
+    const history = readDb();
+    const totalSubmissions = history.length;
+    const priorityCount = history.filter(x => x.destinationDatabase === 'Priority Support Database').length;
+    const marketingCount = history.filter(x => x.destinationDatabase === 'Marketing Database').length;
+    
+    // Sum of redacted PII items across all logs
+    const totalRedactions = history.reduce((sum, entry) => sum + entry.piiDetected.length, 0);
+
+    // Compute counts by PII category type
+    const piiTypeCounts: Record<string, number> = {
+      EMAIL: 0,
+      PHONE: 0,
+      CREDIT_CARD: 0,
+      HEALTH_ID: 0,
+      NAME: 0,
+      ADDRESS: 0
+    };
+
+    history.forEach(entry => {
+      entry.piiDetected.forEach(item => {
+        if (piiTypeCounts[item.type] !== undefined) {
+          piiTypeCounts[item.type]++;
+        } else {
+          piiTypeCounts[item.type] = 1;
+        }
+      });
+    });
+
+    res.json({
+      totalSubmissions,
+      priorityCount,
+      marketingCount,
+      totalRedactions,
+      piiTypeCounts
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to generate stats', message: err.message });
+  }
+});
+
+// CLEAR simulated databases
+app.post('/api/feedback/clear', (req, res) => {
+  try {
+    clearDb();
+    res.json({ status: 'success', message: 'Simulated databases purged successfully' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to clear database', message: err.message });
   }
@@ -116,7 +166,6 @@ app.get('/api/brd', (req, res) => {
 app.post('/api/run-tests', (req, res) => {
   // Execute vitest
   exec('npx vitest run --reporter=json', (error, stdout, stderr) => {
-    // Note: Vitest might return exit code 1 if tests fail, but we still want to capture and parse the json
     let parsedResults = null;
     try {
       if (stdout) {

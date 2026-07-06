@@ -3,1061 +3,1050 @@ import {
   Shield, 
   Database, 
   Activity, 
-  CheckCircle2, 
-  AlertTriangle, 
   RefreshCw, 
-  Play, 
-  FileText, 
   Trash2, 
-  Sparkles, 
-  Smile, 
-  Frown, 
-  Meh, 
-  ArrowRight, 
-  Lock, 
-  Server, 
-  Code2, 
+  Play, 
   Terminal, 
-  Info,
-  Check,
-  ChevronRight,
-  Eye,
-  EyeOff
+  Lock, 
+  Eye, 
+  EyeOff, 
+  ChevronDown, 
+  ChevronUp, 
+  AlertCircle, 
+  ShieldAlert, 
+  ShieldCheck, 
+  User, 
+  Clock, 
+  Check, 
+  ExternalLink, 
+  Sparkles, 
+  Brain, 
+  Tag, 
+  ArrowRight, 
+  CheckCircle2,
+  Server
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// Interfaces matching backend models
+// Interfaces mapping to backend models
+interface PiiItem {
+  type: 'EMAIL' | 'PHONE' | 'CREDIT_CARD' | 'HEALTH_ID' | 'NAME' | 'ADDRESS';
+  value: string;
+  method: 'regex' | 'ai';
+}
+
 interface FeedbackEntry {
-  id: string;
+  submissionId: string;
+  clientName: string;
+  originalText: string;
   originalTextSummary: string;
   redactedText: string;
-  sentiment: 'positive' | 'negative' | 'neutral';
-  sentimentScores: {
-    positive: number;
-    negative: number;
-    neutral: number;
-  };
-  redactedPIICount: number;
-  detectedCategories: string[];
-  routedTo: 'Priority Support' | 'Marketing' | 'General Archive';
+  sentiment: 'Positive' | 'Negative' | 'Neutral';
+  sentimentScore: number; // Scale: -1.0 to 1.0
+  destinationDatabase: 'Priority Support Database' | 'Marketing Database';
+  piiDetected: PiiItem[];
   timestamp: string;
 }
 
-interface SimulatedDatabases {
-  prioritySupport: FeedbackEntry[];
-  marketing: FeedbackEntry[];
-  generalArchive: FeedbackEntry[];
+interface TelemetryStats {
+  totalSubmissions: number;
+  priorityCount: number;
+  marketingCount: number;
+  totalRedactions: number;
+  piiTypeCounts: Record<string, number>;
 }
 
-interface TestRunnerResult {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  results: any;
-}
-
-// Preset feedback submissions for the playground
+// Preset templates exactly from target app
 const PLAYGROUND_PRESETS = [
   {
-    name: "Composite PII (Negative Support Route)",
-    feedback: "The checkout portal is completely broken! I tried typing my card number 4111-2222-3333-4444 and my billing phone 123-456-7890 but the page just hung. I lost my booking. Contact me at support.test@domain.com immediately. Extremely disappointed.",
-    description: "Contains Credit Card, Phone, and Email PII. Negative sentiment triggers the Priority Support database routing."
+    id: "template-1",
+    name: "Fintech Charge Dispute (Visa CC)",
+    text: "I was double charged on my visa 4111111111111111! This transaction on July 1st is completely wrong. Refund me at customer.service@finance.com or reach out to Johnathan Doe immediately.",
+    clientName: "iOS App",
+    iconType: "shield-alert"
   },
   {
-    name: "Fintech PII (Positive Marketing Route)",
-    feedback: "I absolutely love this new digital wallet! It is so fast and clean. At first, I was nervous because I accidentally typed my personal SSN 999-12-3456 in the secure feedback chat, but your staff was amazing. Thanks a million for the great service!",
-    description: "Contains SSN PII. Positive sentiment triggers the Marketing database routing for customer success testimonials."
+    id: "template-2",
+    name: "Healthcare Appointment (MRN Leak)",
+    text: "Dr. Gregory House did a wonderful job with my diagnostic today. My health ID is MRN-9988-1234. Please send my medical record to patient-support@medcare.org. Many thanks!",
+    clientName: "Web Portal",
+    iconType: "shield-check"
   },
   {
-    name: "Neutral Query (General Archive Route)",
-    feedback: "Hello, I am writing to ask if you have an alternative support health ID for patients using plan member ID XY12345678. I can be reached at 555-019-2834 if needed. Let me know the process, thanks.",
-    description: "Contains Health ID and Phone PII. Neutral informational tone triggers the General Archive routing."
+    id: "template-3",
+    name: "Standard Positive Review (No PII)",
+    text: "The payment gateway is incredibly fast and intuitive. I am happy with how security-conscious this fintech portal feels.",
+    clientName: "Web Portal",
+    iconType: "user"
   },
   {
-    name: "Empty Payload (Edge Case Error Handling)",
-    feedback: "   ",
-    description: "Tests the 400 Bad Request verification endpoint. Ensures the server rejects empty inputs gracefully without crashing."
+    id: "template-4",
+    name: "Malformed Payload (Empty Ingress)",
+    text: "   ",
+    clientName: "Android App",
+    iconType: "alert-circle"
   }
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'playground' | 'databases' | 'testing' | 'brd'>('playground');
-  
-  // API Playground State
-  const [feedbackInput, setFeedbackInput] = useState(PLAYGROUND_PRESETS[0].feedback);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pipelineStep, setPipelineStep] = useState<number>(0);
-  const [lastSubmissionResult, setLastSubmissionResult] = useState<FeedbackEntry | null>(null);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const [revealAudit, setRevealAudit] = useState<Record<string, boolean>>({});
-
-  // Live Database State
-  const [databases, setDatabases] = useState<SimulatedDatabases>({
-    prioritySupport: [],
-    marketing: [],
-    generalArchive: []
+  // Main state matching target app variables
+  const [feedbackText, setFeedbackText] = useState("");
+  const [clientName, setClientName] = useState("Web Portal");
+  const [history, setHistory] = useState<FeedbackEntry[]>([]);
+  const [stats, setStats] = useState<TelemetryStats>({
+    totalSubmissions: 0,
+    priorityCount: 0,
+    marketingCount: 0,
+    totalRedactions: 0,
+    piiTypeCounts: {}
   });
-  const [isLoadingDb, setIsLoadingDb] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [result, setResult] = useState<FeedbackEntry | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Testing Suite State
-  const [isRunningTests, setIsRunningTests] = useState(false);
-  const [testResult, setTestResult] = useState<TestRunnerResult | null>(null);
-
-  // BRD Content State
-  const [brdMarkdown, setBrdMarkdown] = useState<string>('');
-  const [isLoadingBrd, setIsLoadingBrd] = useState(false);
-
-  // Fetch all databases from backend
-  const fetchDatabases = async () => {
-    setIsLoadingDb(true);
+  // Sync statistics and history logs from API endpoints
+  const syncTelemetry = async () => {
     try {
-      const res = await fetch('/api/databases');
-      if (res.ok) {
-        const data = await res.json();
-        setDatabases(data);
+      const [statsRes, historyRes] = await Promise.all([
+        fetch("/api/feedback/stats"),
+        fetch("/api/feedback/history")
+      ]);
+      if (statsRes.ok && historyRes.ok) {
+        const statsData = await statsRes.json();
+        const historyData = await historyRes.json();
+        setStats(statsData);
+        setHistory(historyData.data || []);
       }
     } catch (err) {
-      console.error('Failed to fetch databases:', err);
-    } finally {
-      setIsLoadingDb(false);
+      console.error("Error synchronizing stats/history with backend:", err);
     }
   };
 
-  // Clear simulated databases
-  const handleClearDatabases = async () => {
-    if (!window.confirm('Are you sure you want to clear all simulated databases? This is irreversible.')) {
+  useEffect(() => {
+    syncTelemetry();
+  }, []);
+
+  // Submit Inbound Ingestion Pipeline POST request
+  const handleRunPipeline = async () => {
+    setError(null);
+    setResult(null);
+
+    // Basic frontend verification (exactly as target app)
+    if (!feedbackText || feedbackText.trim().length < 3) {
+      setError("Validation failed: feedbackText is empty or malformed");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const response = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedbackText, clientName })
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json();
+        setError(errorBody.error || "A bad request occurred on ingestion validation.");
+        setIsProcessing(false);
+        return;
+      }
+
+      const body = await response.json();
+      if (body.status === "success" && body.data) {
+        setResult(body.data);
+        await syncTelemetry();
+      }
+    } catch (err) {
+      console.error("Pipeline request errored out:", err);
+      setError("Internal network connection timeout or bad gateway error.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Clear simulated database stores
+  const handlePurgeDatabases = async () => {
+    if (!window.confirm("Are you sure you want to clear all simulated databases? This is irreversible.")) {
       return;
     }
     try {
-      const res = await fetch('/api/databases/clear', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setDatabases(data.databases);
-        setLastSubmissionResult(null);
+      const response = await fetch("/api/feedback/clear", { method: "POST" });
+      if (response.ok) {
+        setHistory([]);
+        setResult(null);
+        setError(null);
+        setStats({
+          totalSubmissions: 0,
+          priorityCount: 0,
+          marketingCount: 0,
+          totalRedactions: 0,
+          piiTypeCounts: {}
+        });
       }
     } catch (err) {
-      console.error('Failed to clear databases:', err);
+      console.error("Failed to clear simulated database stores:", err);
     }
   };
 
-  // Fetch BRD document
-  const fetchBrd = async () => {
-    setIsLoadingBrd(true);
-    try {
-      const res = await fetch('/api/brd');
-      if (res.ok) {
-        const data = await res.json();
-        setBrdMarkdown(data.content);
-      }
-    } catch (err) {
-      console.error('Failed to fetch BRD:', err);
-    } finally {
-      setIsLoadingBrd(false);
-    }
+  // Reset inputs
+  const handleResetSandbox = () => {
+    setFeedbackText("");
+    setClientName("Web Portal");
+    setResult(null);
+    setError(null);
   };
 
-  // Ingest Feedback Pipeline
-  const handleIngestFeedback = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setSubmissionError(null);
-    setLastSubmissionResult(null);
-    setPipelineStep(1); // 1: Request Ingested
-
-    // Simulate timeline steps for visual effect
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-    try {
-      await sleep(600);
-      setPipelineStep(2); // 2: Regex Scrubbing
-
-      await sleep(700);
-      setPipelineStep(3); // 3: Semantic AI Scrubbing
-
-      // Trigger the real backend API call
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedback: feedbackInput })
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Server rejected the payload');
-      }
-
-      await sleep(600);
-      setPipelineStep(4); // 4: Sentiment Engine Routing
-
-      const result: FeedbackEntry = await res.json();
-
-      await sleep(500);
-      setPipelineStep(5); // 5: Completed & Routed
-
-      setLastSubmissionResult(result);
-      
-      // Update our local DB view immediately
-      fetchDatabases();
-    } catch (err: any) {
-      setSubmissionError(err.message || 'Network error occurred during submission.');
-      setPipelineStep(0);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Programmatically execute integration tests
-  const handleRunTests = async () => {
-    setIsRunningTests(true);
-    setTestResult(null);
-    try {
-      const res = await fetch('/api/run-tests', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setTestResult(data);
-      } else {
-        throw new Error('Test runner endpoint returned error');
-      }
-    } catch (err: any) {
-      console.error('Failed to run tests:', err);
-      setTestResult({
-        success: false,
-        stdout: '',
-        stderr: err.message || 'Failed to connect to test suite runner.',
-        results: null
-      });
-    } finally {
-      setIsRunningTests(false);
-    }
-  };
-
-  // Load initial data
-  useEffect(() => {
-    fetchDatabases();
-    fetchBrd();
-  }, []);
-
-  const toggleRevealOriginal = (id: string) => {
-    setRevealAudit(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  // Helper to render sentiment colors
-  const getSentimentStyles = (sentiment: 'positive' | 'negative' | 'neutral') => {
-    switch (sentiment) {
-      case 'positive':
-        return {
-          bg: 'bg-emerald-50 border-emerald-100 text-emerald-800',
-          badge: 'bg-emerald-100 text-emerald-800',
-          icon: <Smile className="w-5 h-5 text-emerald-600" />,
-          lightText: 'text-emerald-600'
-        };
-      case 'negative':
-        return {
-          bg: 'bg-rose-50 border-rose-100 text-rose-800',
-          badge: 'bg-rose-100 text-rose-800',
-          icon: <Frown className="w-5 h-5 text-rose-600" />,
-          lightText: 'text-rose-600'
-        };
+  // Helper to render template icons
+  const renderPresetIcon = (iconType: string, isSelected: boolean) => {
+    const classVal = `w-4 h-4 mt-0.5 shrink-0 ${isSelected ? "text-amber-500" : "text-slate-600"}`;
+    switch (iconType) {
+      case "shield-alert":
+        return <ShieldAlert className={classVal} />;
+      case "shield-check":
+        return <ShieldCheck className={classVal} />;
+      case "user":
+        return <User className={classVal} />;
       default:
-        return {
-          bg: 'bg-slate-50 border-slate-100 text-slate-800',
-          badge: 'bg-slate-100 text-slate-800',
-          icon: <Meh className="w-5 h-5 text-slate-600" />,
-          lightText: 'text-slate-600'
-        };
+        return <AlertCircle className={classVal} />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 font-sans flex flex-col antialiased relative overflow-hidden">
-      {/* Background blur decorative circles */}
-      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/20 rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-indigo-600/20 rounded-full blur-[120px]"></div>
-        <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] bg-purple-600/10 rounded-full blur-[100px]"></div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-900/50 selection:text-indigo-100 pb-16">
+      
+      {/* Top Banner Rail */}
+      <div className="bg-slate-900/90 border-b border-slate-800 text-slate-400 text-center py-2 px-4 text-xs font-mono flex items-center justify-center gap-2">
+        <Shield className="w-4 h-4 text-emerald-400 drop-shadow-[0_0_4px_rgba(52,211,153,0.5)]" />
+        <span>STATELESS COMPLIANCE PIPELINE ACTIVE // SECURE EPHEMERAL INGRESS GATEWAY</span>
       </div>
 
-      {/* Upper Navigation Rail */}
-      <header className="relative z-40 border-b border-white/10 backdrop-blur-md bg-white/5 sticky top-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-xl text-white shadow-lg shadow-blue-500/20">
-              <Shield className="w-6 h-6 text-white" id="app-logo-shield" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold font-display text-white tracking-tight leading-tight">GuardRail Compliance Portal</h1>
-              <p className="text-xs text-slate-400 font-mono">Healthcare & Fintech Feedback Ingestion Gateway (HIPAA & PCI-DSS Compliant)</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse" />
-              SERVICE LIVE
-            </span>
-            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-white/5 text-slate-300 border border-white/10">
-              <Sparkles className="w-3.5 h-3.5 mr-1.5 text-indigo-400" />
-              OS LLM / Offline Ready
-            </span>
-          </div>
-        </div>
-      </header>
-
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col space-y-6 relative z-10">
-        {/* Tab Selection */}
-        <div className="flex border-b border-white/10 space-x-6 overflow-x-auto scrollbar-none pb-px">
-          <button 
-            id="tab-playground"
-            onClick={() => setActiveTab('playground')}
-            className={`pb-3 text-sm font-semibold transition-all flex items-center space-x-2 border-b-2 -mb-px ${activeTab === 'playground' ? 'border-indigo-400 text-indigo-300 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
-          >
-            <Activity className="w-4 h-4" />
-            <span>API Playground</span>
-          </button>
-          <button 
-            id="tab-databases"
-            onClick={() => setActiveTab('databases')}
-            className={`pb-3 text-sm font-semibold transition-all flex items-center space-x-2 border-b-2 -mb-px ${activeTab === 'databases' ? 'border-indigo-400 text-indigo-300 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
-          >
-            <Database className="w-4 h-4" />
-            <span>Target Databases</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-bold transition-all ${activeTab === 'databases' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-white/5 text-slate-400 border border-white/5'}`}>
-              {databases.marketing.length + databases.prioritySupport.length + databases.generalArchive.length}
-            </span>
-          </button>
-          <button 
-            id="tab-testing"
-            onClick={() => setActiveTab('testing')}
-            className={`pb-3 text-sm font-semibold transition-all flex items-center space-x-2 border-b-2 -mb-px ${activeTab === 'testing' ? 'border-indigo-400 text-indigo-300 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
-          >
-            <Code2 className="w-4 h-4" />
-            <span>Integration Tests</span>
-          </button>
-          <button 
-            id="tab-brd"
-            onClick={() => setActiveTab('brd')}
-            className={`pb-3 text-sm font-semibold transition-all flex items-center space-x-2 border-b-2 -mb-px ${activeTab === 'brd' ? 'border-indigo-400 text-indigo-300 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
-          >
-            <FileText className="w-4 h-4" />
-            <span>Business Logic (BRD)</span>
-          </button>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
+        
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 pb-4 border-b border-slate-800 gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse" />
+              <span className="text-[10px] font-mono uppercase font-bold tracking-widest text-slate-500">
+                Microservice.Feedback.Redactor v2.0.4
+              </span>
+              <span className="bg-slate-900 border border-slate-800 text-slate-400 text-[10px] font-mono uppercase font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                <Server className="w-3 h-3 text-blue-400" />
+                PORT 3000
+              </span>
+            </div>
+            <h1 className="text-2xl font-display font-bold tracking-tight text-slate-200 uppercase mt-2">
+              Feedback Redaction & Routing
+            </h1>
+            <p className="text-slate-400 mt-1 text-xs max-w-3xl leading-relaxed">
+              Processes raw user submissions using strict Regex checks, secondary Gemini 3.5 Flash semantic safety-nets, and sentiment scoring. Routes HIPAA/PCI compliance files directly to appropriate database systems.
+            </p>
+          </div>
+
+          <div className="shrink-0 flex items-center gap-2">
+            <button 
+              onClick={syncTelemetry}
+              className="p-2 text-slate-400 hover:text-slate-200 bg-slate-900 border border-slate-800 rounded-lg shadow-sm transition active:scale-95 cursor-pointer"
+              title="Manual Sync Telemetry"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <a 
+              href="https://ai.studio/build" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="bg-slate-100 hover:bg-white text-slate-950 text-xs font-mono uppercase font-bold px-4 py-2 rounded flex items-center gap-1.5 transition shadow-[0_0_15px_rgba(255,255,255,0.1)] cursor-pointer"
+            >
+              <span>AI Studio Build</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
 
-        {/* Dynamic Content Views */}
-        <div className="flex-1">
-          {/* Tab 1: Ingestion Playground */}
-          {activeTab === 'playground' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* Submission Portal Left Column */}
-              <div className="lg:col-span-7 flex flex-col space-y-6">
-                <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-xl">
-                  <h2 className="text-lg font-bold font-display text-white mb-2 flex items-center space-x-2">
-                    <Activity className="w-5 h-5 text-indigo-400" />
-                    <span>Inbound Portal Feedback Ingestion</span>
-                  </h2>
-                  <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                    Simulate customer feedback submissions for a major healthcare & fintech provider. Raw text is automatically sanitized to remove credit card numbers, phone numbers, and health IDs, then routed based on sentiment.
-                  </p>
- 
-                  {/* Preset Quick Selectors */}
-                  <div className="mb-6 space-y-3">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Ingestion Test Presets</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {PLAYGROUND_PRESETS.map((preset, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setFeedbackInput(preset.feedback)}
-                          className={`p-3 text-left rounded-xl border text-xs transition-all flex flex-col justify-between ${feedbackInput === preset.feedback ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-200 shadow-lg shadow-indigo-500/10 ring-2 ring-indigo-500/20' : 'border-white/10 hover:border-white/20 hover:bg-white/5 text-slate-300'}`}
-                        >
-                          <span className="font-bold block mb-1">{preset.name}</span>
-                          <span className="text-[10px] text-slate-400 line-clamp-1 leading-normal">{preset.description}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
- 
-                  {/* Feedback Form */}
-                  <form onSubmit={handleIngestFeedback} className="space-y-4">
+        {/* Telemetry Stats Rows (L5) */}
+        <TelemetryStatsRow stats={stats} />
+
+        {/* Console Workspace Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+          
+          {/* Left Panel: Ingestion Sandbox Console */}
+          <div className="bg-slate-900 border border-slate-800/80 p-6 rounded-xl flex flex-col h-full">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-mono uppercase tracking-wider font-bold text-slate-200 flex items-center">
+                <Activity className="w-4 h-4 text-amber-500 mr-2 animate-pulse" />
+                <span>Ingestion & Sandbox Console</span>
+              </h3>
+              <button 
+                onClick={handleResetSandbox}
+                className="text-[10px] font-mono uppercase tracking-widest text-slate-500 hover:text-slate-300 flex items-center transition cursor-pointer"
+                title="Clear Sandbox"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+                <span>Reset Input</span>
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+              Select a clinical or financial test scenario, or write raw custom submission payload text into the container below.
+            </p>
+
+            {/* Presets Grid */}
+            <div className="grid grid-cols-1 gap-2 mb-5">
+              {PLAYGROUND_PRESETS.map((preset) => {
+                const isSelected = feedbackText === preset.text;
+                return (
+                  <button
+                    key={preset.id}
+                    onClick={() => {
+                      setFeedbackText(preset.text);
+                      setClientName(preset.clientName);
+                    }}
+                    className={`text-left p-3 rounded-lg border text-xs transition duration-200 flex items-start gap-2.5 cursor-pointer ${
+                      isSelected 
+                        ? 'border-amber-500/50 bg-slate-950 text-slate-100' 
+                        : 'border-slate-800/60 bg-slate-950/40 text-slate-400 hover:bg-slate-950 hover:border-slate-700'
+                    }`}
+                  >
+                    {renderPresetIcon(preset.iconType, isSelected)}
                     <div>
-                      <label htmlFor="feedback-textarea" className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Portal Feedback Message</label>
-                      <textarea
-                        id="feedback-textarea"
-                        rows={5}
-                        value={feedbackInput}
-                        onChange={(e) => setFeedbackInput(e.target.value)}
-                        placeholder="Type customer feedback message containing PII here..."
-                        className="w-full rounded-xl border border-white/10 p-3 text-sm focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 transition-all bg-slate-950/40 text-slate-100 placeholder-slate-500 font-sans"
-                        disabled={isSubmitting}
-                      />
-                    </div>
-                    
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-800 disabled:to-indigo-800 text-white font-semibold py-3 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-indigo-500/20 border border-indigo-400/20"
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <RefreshCw className="w-5 h-5 animate-spin" />
-                          <span>Processing Pipeline...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-5 h-5 fill-current" />
-                          <span>Submit Ingestion Inbound POST</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
-
-                {/* Healthcare & Fintech Compliance Gateways Board */}
-                <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-xl space-y-4">
-                  <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider flex items-center space-x-2">
-                    <Shield className="w-5 h-5 text-indigo-400" />
-                    <span>Compliance Gateways & Rulesets</span>
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] leading-relaxed">
-                    <div className="bg-slate-950/40 p-3.5 rounded-xl border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-bold text-slate-200">HIPAA Standard</span>
-                        <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[8px] font-bold border border-emerald-500/20">ACTIVE</span>
+                      <div className="font-semibold text-slate-300">{preset.name}</div>
+                      <div className="text-slate-500 mt-0.5 line-clamp-1 italic">
+                        "{preset.text}"
                       </div>
-                      <p className="text-slate-400">Scrubs Social Security Numbers, patient names, and alphanumeric member IDs.</p>
                     </div>
-                    <div className="bg-slate-950/40 p-3.5 rounded-xl border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-bold text-slate-200">PCI-DSS Standard</span>
-                        <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[8px] font-bold border border-emerald-500/20">ACTIVE</span>
-                      </div>
-                      <p className="text-slate-400">Detects and redacts Visa, MasterCard, Amex, and credit card number sequences.</p>
-                    </div>
-                    <div className="bg-slate-950/40 p-3.5 rounded-xl border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-bold text-slate-200">GDPR & CCPA</span>
-                        <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[8px] font-bold border border-emerald-500/20">ACTIVE</span>
-                      </div>
-                      <p className="text-slate-400">Scans for personal emails, telephone numbers, and home/physical addresses.</p>
-                    </div>
-                  </div>
-                </div>
- 
-                {/* Pipeline visualizer progress board */}
-                {(isSubmitting || lastSubmissionResult || submissionError) && (
-                  <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-xl">
-                    <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Microservice Pipeline Processing Status</h3>
-                    
-                    <div className="space-y-4">
-                      {/* Step 1: Input Validation */}
-                      <div className="flex items-start space-x-3">
-                        <div className={`mt-0.5 rounded-full p-1 ${pipelineStep >= 1 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-slate-500'}`}>
-                          {pipelineStep >= 1 ? <Check className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-700 border-t-indigo-400 animate-spin" />}
-                        </div>
-                        <div>
-                          <span className="text-sm font-bold text-slate-200">Inbound POST payload received</span>
-                          <p className="text-xs text-slate-400">Validated non-empty body. Metadata generated.</p>
-                        </div>
-                      </div>
- 
-                      {/* Step 2: Deterministic Redactor */}
-                      {pipelineStep >= 2 && (
-                        <div className="flex items-start space-x-3">
-                          <div className={`mt-0.5 rounded-full p-1 ${pipelineStep >= 2 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-slate-500'}`}>
-                            {pipelineStep >= 2 ? <Check className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-700 border-t-indigo-400 animate-spin" />}
-                          </div>
-                          <div>
-                            <span className="text-sm font-bold text-slate-200">Step 1: Deterministic Regex Filter</span>
-                            <p className="text-xs text-slate-400">Scanning for Credit Card (PCI), SSN, Email, and Phone formats.</p>
-                          </div>
-                        </div>
-                      )}
- 
-                      {/* Step 3: Heuristic AI Redactor */}
-                      {pipelineStep >= 3 && (
-                        <div className="flex items-start space-x-3">
-                          <div className={`mt-0.5 rounded-full p-1 ${pipelineStep >= 3 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-slate-500'}`}>
-                            {pipelineStep >= 3 ? <Check className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-700 border-t-indigo-400 animate-spin" />}
-                          </div>
-                          <div>
-                             <span className="text-sm font-bold text-slate-200">Step 2: Heuristic Semantic AI Cleaning</span>
-                            <p className="text-xs text-slate-400">LLM/Local Heuristics evaluating text context, redacting residual physical addresses, names or custom IDs.</p>
-                          </div>
-                        </div>
-                      )}
- 
-                      {/* Step 4: Sentiment Assessment */}
-                      {pipelineStep >= 4 && (
-                        <div className="flex items-start space-x-3">
-                          <div className={`mt-0.5 rounded-full p-1 ${pipelineStep >= 4 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-slate-500'}`}>
-                            {pipelineStep >= 4 ? <Check className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-700 border-t-indigo-400 animate-spin" />}
-                          </div>
-                          <div>
-                            <span className="text-sm font-bold text-slate-200">Step 3: Sentiment-Based Routing Middleware</span>
-                            <p className="text-xs text-slate-400">Determining compliance-safe routing to appropriate database destination.</p>
-                          </div>
-                        </div>
-                      )}
- 
-                      {/* Step 5: Completed */}
-                      {pipelineStep >= 5 && lastSubmissionResult && (
-                        <div className="flex items-start space-x-3">
-                          <div className="mt-0.5 rounded-full p-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 animate-pulse">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                          </div>
-                          <div>
-                            <span className="text-sm font-bold text-slate-200">Pipeline Completion Succeeded</span>
-                            <p className="text-xs text-emerald-400 font-semibold flex items-center mt-0.5">
-                              Routed successfully to "{lastSubmissionResult.routedTo}" Database
-                              <ArrowRight className="w-3 h-3 mx-1 text-emerald-400" />
-                              Saved and stored!
-                            </p>
-                          </div>
-                        </div>
-                      )}
- 
-                      {/* Error State */}
-                      {submissionError && (
-                        <div className="flex items-start space-x-3 border border-red-500/20 bg-red-500/10 rounded-xl p-4">
-                          <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
-                          <div>
-                            <span className="text-sm font-bold text-red-300">Ingestion Slashes - 400 Bad Request</span>
-                            <p className="text-xs text-red-400 mt-1 leading-normal">{submissionError}</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Right Column: Submission Inspection */}
-              <div className="lg:col-span-5">
-                <div className="sticky top-20 bg-white/5 backdrop-blur-xl text-white rounded-2xl p-6 shadow-xl border border-white/10 flex flex-col space-y-6">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-2">
-                      <Terminal className="w-4 h-4" />
-                      <span>Pipeline API Inspector</span>
-                    </h3>
-                    {lastSubmissionResult && (
-                      <span className="bg-white/10 border border-white/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded-md font-mono">
-                        HTTP 200 OK
-                      </span>
-                    )}
-                  </div>
- 
-                  <AnimatePresence mode="wait">
-                    {lastSubmissionResult ? (
-                      <motion.div
-                        key={lastSubmissionResult.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        className="space-y-6"
-                      >
-                        {/* Summary Metrics Banner */}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3">
-                            <span className="text-[10px] text-slate-400 font-bold block mb-1">FINAL SENTIMENT</span>
-                            <div className="flex items-center space-x-2">
-                              {getSentimentStyles(lastSubmissionResult.sentiment).icon}
-                              <span className="font-bold text-sm capitalize">{lastSubmissionResult.sentiment}</span>
-                            </div>
-                          </div>
-                          <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3">
-                            <span className="text-[10px] text-slate-400 font-bold block mb-1">PII TOKENS REDACTED</span>
-                            <span className="text-lg font-extrabold text-indigo-400 font-mono">
-                              {lastSubmissionResult.redactedPIICount}
-                            </span>
-                          </div>
-                        </div>
- 
-                        {/* Text Comparisons */}
-                        <div className="space-y-4">
-                          <div>
-                            <span className="text-[10px] text-slate-400 font-bold block mb-1.5 uppercase">Audit Trail (Obscured PII Summary)</span>
-                            <div className="bg-slate-950/60 border border-white/10 rounded-xl p-3 text-xs font-mono text-slate-300 leading-relaxed min-h-[60px]">
-                              {lastSubmissionResult.originalTextSummary}
-                            </div>
-                          </div>
- 
-                          <div>
-                            <span className="text-[10px] text-slate-400 font-bold block mb-1.5 uppercase">Clean Output (Saved to DB)</span>
-                            <div className="bg-slate-950/60 border border-white/10 rounded-xl p-3 text-xs font-mono text-emerald-300 leading-relaxed min-h-[60px]">
-                              {lastSubmissionResult.redactedText}
-                            </div>
-                          </div>
-                        </div>
- 
-                        {/* Metadata Tag Cloud */}
-                        <div className="space-y-2">
-                          <span className="text-[10px] text-slate-400 font-bold block uppercase">Detected PII Classes</span>
-                          {lastSubmissionResult.detectedCategories.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {lastSubmissionResult.detectedCategories.map((cat, i) => (
-                                <span key={i} className="text-[10px] font-bold bg-white/5 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 rounded-md">
-                                  {cat}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-500 italic block">No PII detected.</span>
-                          )}
-                        </div>
- 
-                        {/* Routing DB Card */}
-                        <div className="border border-indigo-500/30 bg-indigo-500/10 rounded-xl p-3.5 flex items-center justify-between">
-                          <div>
-                            <span className="text-[9px] font-extrabold text-indigo-300 uppercase tracking-widest block mb-0.5">Automated Router Location</span>
-                            <span className="text-sm font-extrabold text-white flex items-center">
-                              <Database className="w-4 h-4 mr-1.5 text-indigo-400" />
-                              {lastSubmissionResult.routedTo}
-                            </span>
-                          </div>
-                          <ChevronRight className="w-5 h-5 text-indigo-400" />
-                        </div>
-                      </motion.div>
-                    ) : (
-                      <div className="text-center py-16 flex flex-col items-center justify-center space-y-3">
-                        <div className="p-3 bg-white/5 rounded-full border border-white/10">
-                          <Terminal className="w-6 h-6 text-slate-400" />
-                        </div>
-                        <p className="text-sm font-medium text-slate-400 max-w-xs">
-                          Inbound submission is empty. Submit a feedback package in the Portal to see real-time microservice parsing.
-                        </p>
-                      </div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Tab 2: Databases View */}
-          {activeTab === 'databases' && (
-            <div className="space-y-6">
-              {/* Controls bar */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-4 shadow-xl">
-                <div>
-                  <h2 className="text-md font-bold font-display text-white flex items-center">
-                    <Database className="w-5 h-5 mr-2 text-indigo-400" />
-                    Simulated Internal Database Targets
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Customer feedback is scrubbed and securely directed into specific repositories based on real-time sentiment tags.
-                  </p>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <button
-                    onClick={fetchDatabases}
-                    disabled={isLoadingDb}
-                    className="p-2 border border-white/10 hover:border-white/20 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold flex items-center space-x-1 transition-all cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDb ? 'animate-spin' : ''}`} />
-                    <span>Refresh</span>
                   </button>
-                  <button
-                    onClick={handleClearDatabases}
-                    className="p-2 border border-rose-500/20 hover:border-rose-500/40 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold flex items-center space-x-1 transition-all cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Purge Databases</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Grid representation of targeted databases */}
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                {/* Column 1: Priority Support */}
-                <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden flex flex-col h-[600px] shadow-xl">
-                  <div className="bg-rose-500/10 border-b border-white/10 px-4 py-4 flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Frown className="w-5 h-5 text-rose-400" />
-                      <span className="font-bold text-sm text-rose-200">Priority Support Database</span>
-                    </div>
-                    <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold px-2.5 py-0.5 rounded-full">
-                      {databases.prioritySupport.length} Entries
-                    </span>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {databases.prioritySupport.length === 0 ? (
-                      <div className="text-center py-20 text-slate-500 text-xs italic">
-                        Priority Support is empty. No negative feedback has been routed.
-                      </div>
-                    ) : (
-                      databases.prioritySupport.map((entry) => (
-                        <FeedbackCard 
-                          key={entry.id} 
-                          entry={entry} 
-                          reveal={revealAudit[entry.id]} 
-                          onToggleReveal={() => toggleRevealOriginal(entry.id)} 
-                        />
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Column 2: Marketing */}
-                <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden flex flex-col h-[600px] shadow-xl">
-                  <div className="bg-emerald-500/10 border-b border-white/10 px-4 py-4 flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Smile className="w-5 h-5 text-emerald-400" />
-                      <span className="font-bold text-sm text-emerald-200">Marketing Database</span>
-                    </div>
-                    <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold px-2.5 py-0.5 rounded-full">
-                      {databases.marketing.length} Entries
-                    </span>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {databases.marketing.length === 0 ? (
-                      <div className="text-center py-20 text-slate-500 text-xs italic">
-                        Marketing Database is empty. No positive feedback has been routed.
-                      </div>
-                    ) : (
-                      databases.marketing.map((entry) => (
-                        <FeedbackCard 
-                          key={entry.id} 
-                          entry={entry} 
-                          reveal={revealAudit[entry.id]} 
-                          onToggleReveal={() => toggleRevealOriginal(entry.id)} 
-                        />
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Column 3: General Archive */}
-                <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden flex flex-col h-[600px] shadow-xl">
-                  <div className="bg-white/5 border-b border-white/10 px-4 py-4 flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Meh className="w-5 h-5 text-slate-400" />
-                      <span className="font-bold text-sm text-slate-200">General Archive Database</span>
-                    </div>
-                    <span className="bg-white/10 text-slate-300 border border-white/10 text-xs font-bold px-2.5 py-0.5 rounded-full">
-                      {databases.generalArchive.length} Entries
-                    </span>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {databases.generalArchive.length === 0 ? (
-                      <div className="text-center py-20 text-slate-500 text-xs italic">
-                        General Archive is empty. No neutral feedback has been routed.
-                      </div>
-                    ) : (
-                      databases.generalArchive.map((entry) => (
-                        <FeedbackCard 
-                          key={entry.id} 
-                          entry={entry} 
-                          reveal={revealAudit[entry.id]} 
-                          onToggleReveal={() => toggleRevealOriginal(entry.id)} 
-                        />
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
-          )}
 
-          {/* Tab 3: Integration Tests */}
-          {activeTab === 'testing' && (
-            <div className="bg-white/5 border border-white/10 backdrop-blur-xl p-6 rounded-2xl shadow-xl max-w-4xl mx-auto space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-bold font-display text-white flex items-center space-x-2">
-                    <Code2 className="w-5 h-5 text-indigo-400" />
-                    <span>Microservice Automated Integration Testing Suite</span>
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                    Runs actual backend integration tests (using <strong>ViTest</strong> &amp; <strong>Supertest</strong>) targeting endpoint payload redacting and edge-case bad requests.
-                  </p>
-                </div>
-                <button
-                  onClick={handleRunTests}
-                  disabled={isRunningTests}
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-800 disabled:to-indigo-800 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition-all flex items-center space-x-2 flex-shrink-0 cursor-pointer shadow-lg shadow-indigo-500/20 border border-indigo-400/20"
+            {/* Form Inputs */}
+            <div className="space-y-4 flex-1 flex flex-col">
+              <div>
+                <label className="block text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+                  Ingestion Ingress / Client Channel
+                </label>
+                <select
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-mono"
                 >
-                  {isRunningTests ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Running ViTest...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 fill-current" />
-                      <span>Execute Test Suite</span>
-                    </>
-                  )}
-                </button>
+                  <option value="Web Portal">Web Portal (Default)</option>
+                  <option value="iOS App">iOS Mobile App</option>
+                  <option value="Android App">Android Mobile App</option>
+                  <option value="Email Ingest">Email Ingestion Daemon</option>
+                  <option value="API Integration Gateway">Third-Party Partner API Gateway</option>
+                </select>
               </div>
 
-              {testResult ? (
-                <div className="space-y-6">
-                  {/* Test Summary Dashboard */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-slate-950/40 border border-white/5 rounded-xl p-4">
-                      <span className="text-[10px] text-slate-400 font-bold block mb-1">TEST OUTCOME</span>
-                      <div className="flex items-center space-x-2">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                        <span className="font-extrabold text-sm text-slate-200">100% PASSING</span>
-                      </div>
-                    </div>
-                    <div className="bg-slate-950/40 border border-white/5 rounded-xl p-4">
-                      <span className="text-[10px] text-slate-400 font-bold block mb-1">TOTAL VERIFICATIONS</span>
-                      <span className="text-sm font-extrabold text-slate-200 font-mono">4 Integration Tests</span>
-                    </div>
-                    <div className="bg-slate-950/40 border border-white/5 rounded-xl p-4">
-                      <span className="text-[10px] text-slate-400 font-bold block mb-1">ENVIRONMENT</span>
-                      <span className="text-sm font-extrabold text-indigo-300 font-mono">ViTest &amp; Supertest</span>
-                    </div>
-                  </div>
-
-                  {/* Scannable checklist of assertions */}
-                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 space-y-3">
-                    <span className="text-xs font-bold text-emerald-300 uppercase block tracking-wider">Scannable Verification Checklist</span>
-                    
-                    <div className="space-y-2 text-sm text-emerald-200 font-medium">
-                      <div className="flex items-center space-x-2">
-                        <Check className="w-4 h-4 text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 rounded-full p-0.5" />
-                        <span>Payload Test: Inbound POST with credit card PII returns HTTP 200 OK</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Check className="w-4 h-4 text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 rounded-full p-0.5" />
-                        <span>Data Redaction check: Credit Card string is fully scrubbed in destination DB</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Check className="w-4 h-4 text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 rounded-full p-0.5" />
-                        <span>Composite Redaction check: String containing both phone &amp; email is successfully scrubbed</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Check className="w-4 h-4 text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 rounded-full p-0.5" />
-                        <span>Edge Case: POST request with empty feedback returns clean HTTP 400 Bad Request</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Raw Terminal outputs */}
-                  <div className="space-y-2">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Terminal Outputs (Standard Out)</span>
-                    <div className="bg-slate-950/80 border border-white/10 text-slate-300 font-mono text-xs rounded-xl p-4 max-h-[300px] overflow-y-auto leading-normal whitespace-pre-wrap select-all">
-                      {testResult.stdout || 'Tests ran successfully, but no stdout stream was emitted.\n\nAll integration assertions passed green!'}
-                      {testResult.stderr && (
-                        <div className="text-red-400 mt-4 border-t border-slate-800 pt-2">
-                          {testResult.stderr}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+              <div className="flex-1 flex flex-col">
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="block text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest">
+                    Feedback Submission Text
+                  </label>
+                  <span className="text-[10px] font-mono text-slate-600">
+                    {feedbackText.length} CHARS
+                  </span>
                 </div>
-              ) : (
-                <div className="text-center py-16 border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center space-y-4 bg-white/5 backdrop-blur-sm">
-                  <div className="p-3 bg-white/5 rounded-full border border-white/10">
-                    <Terminal className="w-6 h-6 text-slate-400" />
-                  </div>
-                  <div className="max-w-md">
-                    <span className="font-bold text-sm text-slate-200 block mb-1">No Tests Run Yet</span>
-                    <p className="text-xs text-slate-400 leading-normal">
-                      Click the "Execute Test Suite" button to spawn the ViTest runtime programmatically on our Express server and output assertion diagnostics.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Tab 4: BRD */}
-          {activeTab === 'brd' && (
-            <div className="bg-white/5 border border-white/10 backdrop-blur-xl p-6 rounded-2xl shadow-xl max-w-4xl mx-auto space-y-6">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <div>
-                  <h2 className="text-lg font-bold font-display text-white flex items-center space-x-2">
-                    <FileText className="w-5 h-5 text-indigo-400" />
-                    <span>Business Requirements Document (BRD)</span>
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Formal specification of regulatory compliance rules, success metrics, and structural data boundaries.
-                  </p>
-                </div>
+                <textarea
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  placeholder="Type feedback containing sensitive information to see the automatic sanitizing scanner in action..."
+                  className="w-full flex-1 min-h-[140px] text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 resize-none font-mono leading-relaxed"
+                />
               </div>
 
-              {isLoadingBrd ? (
-                <div className="text-center py-12">
-                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-400" />
-                  <p className="text-xs text-slate-400 mt-2">Loading specification...</p>
-                </div>
-              ) : (
-                <div className="prose prose-slate max-w-none text-slate-300 text-sm leading-relaxed space-y-6 select-all font-sans">
-                  {/* Let's render a very readable layout of our BRD.md directly in beautiful HTML */}
-                  <div className="bg-slate-950/40 border border-white/5 rounded-xl p-5">
-                    <h3 className="font-bold font-display text-white text-base mb-2">1. Problem Statement</h3>
-                    <p className="text-slate-300 text-sm">
-                      A major healthcare and fintech client receives thousands of daily customer feedback submissions via a web portal. These submissions frequently contain highly sensitive Personally Identifiable Information (PII) such as credit card numbers, phone numbers, email addresses, and HIPAA-protected Health IDs or SSNs. 
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-950/40 border border-white/5 rounded-xl p-5">
-                    <h3 className="font-bold font-display text-white text-base mb-2">2. Solution Overview & pipeline Architecture</h3>
-                    <p className="text-slate-300 text-sm">
-                      To eliminate regulatory risks, the client requires a production-grade microservice that automatically scrubs (redacts) sensitive PII strings and routes the cleaned feedback to specific databases depending on overall sentiment:
-                    </p>
-                    <ul className="list-disc pl-5 text-slate-300 text-sm mt-2 space-y-1">
-                      <li><strong>Marketing Database</strong>: Ingests positive sentiment messages to capture brand endorsements.</li>
-                      <li><strong>Priority Support Database</strong>: Ingests negative sentiment messages for urgent response.</li>
-                      <li><strong>General Archive Database</strong>: Ingests neutral messages for product feedback logs.</li>
-                    </ul>
-                  </div>
-
-                  <div className="bg-slate-950/40 border border-white/5 rounded-xl p-5">
-                    <h3 className="font-bold font-display text-white text-base mb-2">3. Compliance Success Metrics</h3>
-                    <ul className="list-disc pl-5 text-slate-300 text-sm space-y-1.5">
-                      <li><strong>100% Redaction Integrity</strong>: Essential formats (Credit Cards, Phone Numbers, Emails) must never trigger leaks in persistent storages.</li>
-                      <li><strong>Composite Resiliency</strong>: A single feedback text containing both a phone number and email must redaction-scrub both correctly with `[REDACTED]`.</li>
-                      <li><strong>High-Fidelity Sentiment Routing</strong>: Positive/negative logs must be correctly steered into appropriate datastores.</li>
-                      <li><strong>Safe Audit Trails</strong>: Original texts must be safely masked (obscured) in operators' dashboards to retain structural debugging capability while fully conforming to GDPR and HIPAA constraints.</li>
-                    </ul>
-                  </div>
-
-                  <div className="bg-slate-950/40 border border-white/5 rounded-xl p-5">
-                    <h3 className="font-bold font-display text-white text-base mb-2">4. explicit Data Boundaries</h3>
-                    <div className="overflow-x-auto mt-3">
-                      <table className="w-full text-xs text-left text-slate-400 border-collapse border border-white/10">
-                        <thead className="text-xs text-slate-200 uppercase bg-white/5">
-                          <tr>
-                            <th className="px-3 py-2 border border-white/10">Data Category</th>
-                            <th className="px-3 py-2 border border-white/10">Format Description</th>
-                            <th className="px-3 py-2 border border-white/10">Compliance Standard</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-slate-300">
-                          <tr className="border-b border-white/10">
-                            <td className="px-3 py-2 border border-white/10 font-bold text-slate-200">Credit Card</td>
-                            <td className="px-3 py-2 border border-white/10 font-mono">13 to 16 digit integers</td>
-                            <td className="px-3 py-2 border border-white/10">PCI-DSS</td>
-                          </tr>
-                          <tr className="border-b border-white/10">
-                            <td className="px-3 py-2 border border-white/10 font-bold text-slate-200">Email Address</td>
-                            <td className="px-3 py-2 border border-white/10 font-mono">RFC 5322 specifications</td>
-                            <td className="px-3 py-2 border border-white/10">GDPR, HIPAA, CCPA</td>
-                          </tr>
-                          <tr className="border-b border-white/10">
-                            <td className="px-3 py-2 border border-white/10 font-bold text-slate-200">Phone Number</td>
-                            <td className="px-3 py-2 border border-white/10 font-mono">US/International variations</td>
-                            <td className="px-3 py-2 border border-white/10">GDPR, HIPAA, CCPA</td>
-                          </tr>
-                          <tr>
-                            <td className="px-3 py-2 border border-white/10 font-bold text-slate-200">Health ID / SSN</td>
-                            <td className="px-3 py-2 border border-white/10 font-mono">###-##-#### or alpha-numeric IDs</td>
-                            <td className="px-3 py-2 border border-white/10">HIPAA, CCPA</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Ingress Button */}
+              <button
+                onClick={handleRunPipeline}
+                disabled={isProcessing}
+                className={`w-full py-2.5 rounded text-xs font-mono font-bold uppercase tracking-widest transition flex items-center justify-center gap-2 cursor-pointer ${
+                  isProcessing 
+                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-800" 
+                    : "bg-slate-100 text-slate-950 hover:bg-white shadow-[0_0_15px_rgba(255,255,255,0.05)] active:scale-[0.98]"
+                }`}
+              >
+                {isProcessing ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-slate-600 border-t-slate-200 rounded-full animate-spin" />
+                    <span>RUNNING PIPELINE...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Run Ingestion Pipeline</span>
+                  </>
+                )}
+              </button>
             </div>
-          )}
-        </div>
-      </main>
+          </div>
 
-      {/* App Footer */}
-      <footer className="bg-transparent border-t border-white/10 py-6 mt-12 text-center text-xs text-slate-500 font-medium">
-        <div className="max-w-7xl mx-auto px-4">
-          <p>© 2026 GuardRail Microservices. Developed for Compliance, GDPR, CCPA, and HIPAA compliance verification.</p>
+          {/* Right Panel: Pipeline Inspection Results */}
+          <div className="h-full">
+            <PipelineInspector result={result} error={error} isProcessing={isProcessing} />
+          </div>
         </div>
-      </footer>
+
+        {/* Database Logs Section */}
+        <DatabaseLogs history={history} onClearDb={handlePurgeDatabases} />
+
+        {/* Footer */}
+        <div className="mt-12 flex flex-col md:flex-row md:items-center justify-between text-slate-500 text-xs border-t border-slate-800 pt-6 gap-4 font-mono uppercase tracking-wider">
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-slate-600" />
+            <span>Built using Vite + Express backend and Node.js typescript bundling.</span>
+          </div>
+          <div>
+            <span>Stateless microservice deployment design • AntiGravity IDE Verified • 2026</span>
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }
 
-// Sub-component: Feedback database display card
-interface CardProps {
-  key?: string;
-  entry: FeedbackEntry;
-  reveal: boolean;
-  onToggleReveal: () => void;
+// Telemetry Stats Row Component (L5)
+interface StatsProps {
+  stats: TelemetryStats;
 }
 
-function FeedbackCard({ entry, reveal, onToggleReveal }: CardProps) {
-  const isPositive = entry.sentiment === 'positive';
-  const isNegative = entry.sentiment === 'negative';
-
-  const getCardStyles = () => {
-    if (isPositive) return 'border-emerald-500/20 hover:border-emerald-500/40 bg-emerald-500/5 text-slate-100';
-    if (isNegative) return 'border-rose-500/20 hover:border-rose-500/40 bg-rose-500/5 text-slate-100';
-    return 'border-white/10 hover:border-white/20 bg-white/5 text-slate-100';
-  };
+function TelemetryStatsRow({ stats }: StatsProps) {
+  const marketingPct = stats.totalSubmissions > 0 
+    ? Math.round((stats.marketingCount / stats.totalSubmissions) * 100) 
+    : 0;
+  
+  const priorityPct = stats.totalSubmissions > 0 
+    ? Math.round((stats.priorityCount / stats.totalSubmissions) * 100) 
+    : 0;
 
   return (
-    <div className={`p-4 rounded-xl border backdrop-blur-md shadow-lg transition-all ${getCardStyles()} space-y-3`}>
-      {/* Header info */}
-      <div className="flex items-center justify-between text-[10px]">
-        <span className="font-mono text-slate-400 font-bold">{entry.id}</span>
-        <span className="text-slate-400 font-semibold">{new Date(entry.timestamp).toLocaleTimeString()}</span>
-      </div>
-
-      {/* Clean Feedback Body */}
-      <div className="space-y-1">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block">Clean Storage Feedback</span>
-        <p className="text-xs text-slate-200 font-medium leading-relaxed font-mono bg-slate-950/40 p-2.5 rounded-lg border border-white/5 select-all">
-          {entry.redactedText}
-        </p>
-      </div>
-
-      {/* Obscured Original Body */}
-      <div className="space-y-1">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center">
-            <Lock className="w-3 h-3 mr-1 text-slate-400" />
-            Audit Trail Text
-          </span>
-          <button 
-            type="button"
-            onClick={onToggleReveal}
-            className="text-indigo-400 hover:text-indigo-300 text-[10px] font-bold flex items-center space-x-0.5 cursor-pointer"
-          >
-            {reveal ? (
-              <>
-                <EyeOff className="w-3 h-3" />
-                <span>Mask Text</span>
-              </>
-            ) : (
-              <>
-                <Eye className="w-3 h-3" />
-                <span>Display Audit</span>
-              </>
-            )}
-          </button>
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      
+      {/* Submissions Logged Card */}
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="bg-slate-900/40 p-5 rounded-xl border border-slate-800/80 flex items-center justify-between"
+      >
+        <div>
+          <p className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">
+            Submissions Logged
+          </p>
+          <h3 className="text-3xl font-display font-light text-slate-200 mt-2">
+            {stats.totalSubmissions}
+            <span className="text-xs font-mono text-slate-600 ml-1">REQS</span>
+          </h3>
+          <p className="text-[10px] text-emerald-400 font-mono uppercase tracking-wide flex items-center mt-2.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+            Active Stateless Queue
+          </p>
         </div>
-        <p className="text-xs text-slate-400 leading-normal bg-slate-950/20 p-2.5 rounded-lg border border-dashed border-white/10 select-all">
-          {reveal ? entry.originalTextSummary : '••••••••••••••••••••••••••••••••••••••••••••••••••••••'}
+        <div className="p-2.5 bg-slate-950/60 text-slate-400 rounded-lg border border-slate-800">
+          <Activity className="w-5 h-5 text-blue-400" />
+        </div>
+      </motion.div>
+
+      {/* Total PII Scrubbed Card */}
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.05 }}
+        className="bg-slate-900/40 p-5 rounded-xl border border-slate-800/80 flex items-center justify-between"
+      >
+        <div>
+          <p className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">
+            Total PII Scrubbed
+          </p>
+          <h3 className="text-3xl font-display font-light text-amber-500 mt-2">
+            {stats.totalRedactions}
+            <span className="text-xs font-mono text-slate-600 ml-1">SCANS</span>
+          </h3>
+          <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wide mt-2.5 flex items-center gap-1">
+            <Activity className="w-3 h-3 text-amber-400 animate-pulse" />
+            Hybrid Regex & AI
+          </p>
+        </div>
+        <div className="p-2.5 bg-slate-950/60 text-slate-400 rounded-lg border border-slate-800">
+          <Lock className="w-5 h-5 text-amber-500" />
+        </div>
+      </motion.div>
+
+      {/* Marketing DB Route Card */}
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+        className="bg-slate-900/40 p-5 rounded-xl border border-slate-800/80 flex items-center justify-between"
+      >
+        <div>
+          <p className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">
+            Marketing DB Route
+          </p>
+          <h3 className="text-3xl font-display font-light text-emerald-400 mt-2">
+            {stats.marketingCount}
+            <span className="text-xs font-mono text-slate-600 ml-1">FILES</span>
+          </h3>
+          <div className="w-24 bg-slate-950/60 border border-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
+            <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${marketingPct}%` }} />
+          </div>
+          <p className="text-[9px] font-mono text-slate-500 uppercase tracking-tighter mt-1">
+            {marketingPct}% SUCCESS ROUTED
+          </p>
+        </div>
+        <div className="p-2.5 bg-slate-950/60 text-slate-400 rounded-lg border border-slate-800">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+        </div>
+      </motion.div>
+
+      {/* Priority Support Route Card */}
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.15 }}
+        className="bg-slate-900/40 p-5 rounded-xl border border-slate-800/80 flex items-center justify-between"
+      >
+        <div>
+          <p className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">
+            Priority Support Route
+          </p>
+          <h3 className="text-3xl font-display font-light text-rose-500 mt-2">
+            {stats.priorityCount}
+            <span className="text-xs font-mono text-slate-600 ml-1">ALERTS</span>
+          </h3>
+          <div className="w-24 bg-slate-950/60 border border-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
+            <div className="bg-rose-500 h-full rounded-full" style={{ width: `${priorityPct}%` }} />
+          </div>
+          <p className="text-[9px] font-mono text-slate-500 uppercase tracking-tighter mt-1">
+            {priorityPct}% HIGH-SLA NEGATIVE
+          </p>
+        </div>
+        <div className="p-2.5 bg-slate-950/60 text-slate-400 rounded-lg border border-slate-800">
+          <ShieldAlert className="w-5 h-5 text-rose-500" />
+        </div>
+      </motion.div>
+
+    </div>
+  );
+}
+
+// Pipeline Inspection Panel Component (G5)
+interface InspectorProps {
+  result: FeedbackEntry | null;
+  error: string | null;
+  isProcessing: boolean;
+}
+
+function PipelineInspector({ result, error, isProcessing }: InspectorProps) {
+  
+  // Custom theme background mapping for categories
+  const getBadgeColors = (type: string) => {
+    switch (type.toUpperCase()) {
+      case 'CREDIT_CARD':
+        return "bg-orange-950/40 text-orange-400 border-orange-900/60";
+      case 'EMAIL':
+        return "bg-blue-950/40 text-blue-400 border-blue-900/60";
+      case 'PHONE':
+        return "bg-teal-950/40 text-teal-400 border-teal-900/60";
+      case 'HEALTH_ID':
+        return "bg-purple-950/40 text-purple-400 border-purple-900/60";
+      case 'NAME':
+        return "bg-pink-950/40 text-pink-400 border-pink-900/60";
+      case 'ADDRESS':
+        return "bg-amber-950/40 text-amber-400 border-amber-900/60";
+      default:
+        return "bg-slate-950/40 text-slate-400 border-slate-800";
+    }
+  };
+
+  if (isProcessing) {
+    return (
+      <div className="bg-slate-900 p-6 rounded-xl border border-slate-800/80 flex flex-col items-center justify-center min-h-[500px] h-full shadow-xl">
+        <div className="relative flex items-center justify-center mb-6">
+          <div className="absolute w-24 h-24 border-4 border-slate-800 border-t-amber-500 rounded-full animate-spin" />
+          <div className="absolute w-16 h-16 border-4 border-slate-950 border-t-emerald-400 rounded-full animate-spin animate-reverse" />
+          <Shield className="w-8 h-8 text-amber-500 animate-pulse" />
+        </div>
+        <h4 className="text-sm font-mono uppercase tracking-wider font-bold text-slate-200">
+          Scrubbing & Evaluating Submission
+        </h4>
+        <p className="text-xs font-mono text-slate-500 mt-2 text-center max-w-sm leading-relaxed">
+          Applying high-performance regex scrubbers followed by a secondary Open Source LLM / Heuristic safety-net...
         </p>
       </div>
+    );
+  }
 
-      {/* Categorizations */}
-      <div className="flex flex-wrap gap-1">
-        {entry.detectedCategories.map((cat, i) => (
-          <span key={i} className="text-[9px] font-extrabold bg-white/10 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 rounded-full uppercase">
-            {cat}
+  if (error) {
+    return (
+      <div className="bg-slate-900 p-6 rounded-xl border border-rose-950/80 flex flex-col items-center justify-center min-h-[500px] h-full shadow-xl">
+        <AlertCircle className="w-12 h-12 text-rose-500 mb-4 animate-bounce" />
+        <h4 className="text-sm font-mono uppercase tracking-wider font-bold text-rose-400">
+          Pipeline Execution Halted
+        </h4>
+        <div className="bg-slate-950 border border-rose-900/60 rounded-lg p-4 mt-3 max-w-md w-full">
+          <p className="text-xs font-mono text-rose-500 leading-relaxed">
+            [ERROR 400 - BAD REQUEST]<br />
+            {error}
+          </p>
+        </div>
+        <p className="text-xs text-slate-400 mt-4 text-center max-w-sm leading-relaxed">
+          The validation engine successfully blocked this empty or malformed payload to protect downstream servers from processing invalid files.
+        </p>
+      </div>
+    );
+  }
+
+  if (!result) {
+    return (
+      <div className="bg-slate-900 p-6 rounded-xl border border-slate-800/80 flex flex-col items-center justify-center min-h-[500px] h-full text-center shadow-xl">
+        <div className="p-4 bg-slate-950/60 rounded-full border border-slate-800/80 mb-4">
+          <Terminal className="w-8 h-8 text-slate-500" />
+        </div>
+        <h4 className="text-sm font-mono uppercase tracking-wider font-bold text-slate-300">
+          Pipeline Awaiting Ingestion
+        </h4>
+        <p className="text-xs text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">
+          No feedback has been submitted in this session yet. Choose a template or type in a custom query on the left to start the pipeline.
+        </p>
+        <div className="mt-8 w-full max-w-md border border-dashed border-slate-800 rounded-xl p-4 bg-slate-950/30">
+          <h5 className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest mb-4">
+            Microservice Processing Order
+          </h5>
+          <div className="space-y-3.5 text-left text-xs font-mono">
+            <div className="flex items-center gap-3">
+              <span className="w-5 h-5 rounded bg-slate-950 border border-slate-800 text-slate-400 flex items-center justify-center font-bold text-[10px]">1</span>
+              <span className="font-medium text-slate-400">Schema Validation Check</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="w-5 h-5 rounded bg-slate-950 border border-slate-800 text-slate-400 flex items-center justify-center font-bold text-[10px]">2</span>
+              <span className="font-medium text-slate-400">Regex-based PII Scrub (Card, Email, Phone, ID)</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="w-5 h-5 rounded bg-slate-950 border border-slate-800 text-slate-400 flex items-center justify-center font-bold text-[10px]">3</span>
+              <span className="font-medium text-slate-400">Gemini/OS LLM AI Semantic Guard (Names/Addresses)</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="w-5 h-5 rounded bg-slate-950 border border-slate-800 text-slate-400 flex items-center justify-center font-bold text-[10px]">4</span>
+              <span className="font-medium text-slate-400">Sentiment & Dynamic Database Router</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const regexItems = result.piiDetected.filter(x => x.method === 'regex');
+  const aiItems = result.piiDetected.filter(x => x.method === 'ai');
+
+  return (
+    <div className="bg-slate-900 border border-slate-800/80 p-6 rounded-xl flex flex-col h-full shadow-xl space-y-6">
+      
+      {/* Header Info */}
+      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div>
+          <h3 className="text-sm font-mono uppercase tracking-wider font-bold text-slate-200 flex items-center gap-1.5">
+            <Activity className="w-4 h-4 text-emerald-400" />
+            <span>Compliance Audit Pipeline Inspector</span>
+          </h3>
+          <p className="text-[10px] text-slate-500 font-mono mt-0.5 uppercase">
+            Ingestion Trace: {result.submissionId}
+          </p>
+        </div>
+        <span className="text-[9px] font-mono bg-emerald-950/30 text-emerald-400 border border-emerald-900/50 px-2 py-0.5 rounded uppercase font-bold">
+          200 OK
+        </span>
+      </div>
+
+      {/* Step 2: Regex Scrubber */}
+      <div className="relative pl-7 border-l border-slate-800 space-y-2">
+        <div className="absolute -left-[4.5px] top-0.5 w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+        <div className="flex justify-between items-start">
+          <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-amber-500">
+            Step 2: Deterministic Regex Scrubber
+          </h4>
+          <span className="text-[9px] font-mono bg-amber-950/30 text-amber-400 font-bold px-2 py-0.5 rounded border border-amber-900/50">
+            {regexItems.length} DETECTED
           </span>
-        ))}
-        {entry.detectedCategories.length === 0 && (
-          <span className="text-[9px] font-bold text-slate-500 italic">No sensitive categories</span>
+        </div>
+        <p className="text-[11px] font-mono text-slate-500 leading-relaxed">
+          Heuristics scrubbed emails, credentials, credit cards, and static keys instantly:
+        </p>
+        {regexItems.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {regexItems.map((item, idx) => (
+              <span key={idx} className={`text-[9px] px-2 py-0.5 rounded border font-mono flex items-center gap-1.5 ${getBadgeColors(item.type)}`}>
+                <Tag className="w-3 h-3 shrink-0 text-slate-400" />
+                {item.type}: {item.value.replace(/./g, (char, index) => (index > 3 && index < item.value.length - 4) ? "*" : char)}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs font-mono text-slate-600 italic">
+            No hard patterns matching regular expressions detected.
+          </p>
         )}
       </div>
 
-      {/* Confidence Metrics */}
-      <div className="space-y-1 border-t border-white/10 pt-2.5">
-        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Routing Sentiment Balance</span>
-        <div className="flex items-center space-x-2 text-[10px] font-bold">
-          <span className="text-emerald-400 font-mono">Pos: {(entry.sentimentScores.positive * 100).toFixed(0)}%</span>
-          <span className="text-slate-500">|</span>
-          <span className="text-rose-400 font-mono">Neg: {(entry.sentimentScores.negative * 100).toFixed(0)}%</span>
-          <span className="text-slate-500">|</span>
-          <span className="text-slate-400 font-mono">Neu: {(entry.sentimentScores.neutral * 100).toFixed(0)}%</span>
+      {/* Step 3: AI Cognitive Scrubber */}
+      <div className="relative pl-7 border-l border-slate-800 space-y-2">
+        <div className="absolute -left-[4.5px] top-0.5 w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+        <div className="flex justify-between items-start">
+          <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-1">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Step 3: Gemini AI Cognitive Scrubber</span>
+          </h4>
+          <span className="text-[9px] font-mono bg-indigo-950/30 text-indigo-400 font-bold px-2 py-0.5 rounded border border-indigo-900/50">
+            {aiItems.length} DETECTED
+          </span>
         </div>
+        <p className="text-[11px] font-mono text-slate-500 leading-relaxed">
+          Contextual model redaction for Patient/Doctor Names, Hospital Entities, and Addresses:
+        </p>
+        {aiItems.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {aiItems.map((item, idx) => (
+              <span key={idx} className={`text-[9px] px-2 py-0.5 rounded border font-mono flex items-center gap-1.5 ${getBadgeColors(item.type)}`}>
+                <Brain className="w-3 h-3 shrink-0 text-slate-400" />
+                {item.type}: {item.value}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs font-mono text-slate-600 italic">
+            No additional contextual names/addresses identified by AI.
+          </p>
+        )}
+      </div>
+
+      {/* Final Redacted Output Box */}
+      <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-850 mt-2">
+        <div className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest mb-2">
+          Final Redacted Output (Stored in Cloud)
+        </div>
+        <div className="bg-slate-950 p-3 rounded-lg border border-slate-850 text-xs text-slate-300 leading-relaxed font-mono select-all">
+          {result.redactedText}
+        </div>
+      </div>
+
+      {/* Step 4: Sentiment Score */}
+      <div className="relative pl-7 border-l border-slate-800 space-y-2">
+        <div className="absolute -left-[4.5px] top-0.5 w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
+        <div className="flex justify-between items-start">
+          <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-500">
+            Step 4: Sentiment Analysis
+          </h4>
+          <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${
+            result.sentiment === 'Positive' 
+              ? "bg-emerald-950/30 text-emerald-400 border-emerald-900/50" 
+              : result.sentiment === 'Negative' 
+                ? "bg-rose-950/30 text-rose-400 border-rose-900/50" 
+                : "bg-slate-950 text-slate-400 border-slate-850"
+          }`}>
+            {result.sentiment.toUpperCase()}
+          </span>
+        </div>
+        
+        {/* Slider bar */}
+        <div className="mt-2 flex items-center gap-4">
+          <div className="flex-1 font-mono">
+            <div className="flex justify-between text-[10px] text-slate-500 mb-1.5">
+              <span>Angry (-1.0)</span>
+              <span className="text-slate-300">Score: {result.sentimentScore.toFixed(2)}</span>
+              <span>Happy (1.0)</span>
+            </div>
+            <div className="w-full bg-slate-950 border border-slate-850 h-2.5 rounded-full overflow-hidden relative">
+              <div 
+                className={`h-full rounded-full transition-all duration-500 ${
+                  result.sentiment === 'Positive' 
+                    ? "bg-emerald-500" 
+                    : result.sentiment === 'Negative' 
+                      ? "bg-rose-500" 
+                      : "bg-slate-500"
+                }`}
+                style={{ width: `${((result.sentimentScore + 1) / 2) * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Step 5: Database Routing Ingress */}
+      <div className="relative pl-7">
+        <div className="absolute -left-[4.5px] top-0.5 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)] animate-pulse" />
+        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-500">
+          Step 5: Database Routing Ingress
+        </h4>
+        <div className="mt-3 flex items-center justify-between gap-2 p-3.5 rounded-xl border bg-slate-950/30 border-slate-850">
+          <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
+            Sanitized Submission routed to:
+          </div>
+          <div className="flex items-center gap-2">
+            <ArrowRight className="w-4 h-4 text-slate-600 animate-pulse" />
+            <span className={`text-[10px] font-mono uppercase tracking-wide font-bold px-3 py-1.5 rounded border flex items-center gap-1.5 ${
+              result.destinationDatabase === 'Priority Support Database' 
+                ? "bg-rose-950/40 border-rose-900/60 text-rose-400" 
+                : "bg-emerald-950/40 border-emerald-900/60 text-emerald-400"
+            }`}>
+              {result.destinationDatabase}
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// Database Logs View Component (Y5)
+interface DBLogsProps {
+  history: FeedbackEntry[];
+  onClearDb: () => void;
+}
+
+function DatabaseLogs({ history, onClearDb }: DBLogsProps) {
+  const [activeTab, setActiveTab] = useState<'priority' | 'marketing'>('priority');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const priorityEntries = history.filter(x => x.destinationDatabase === 'Priority Support Database');
+  const marketingEntries = history.filter(x => x.destinationDatabase === 'Marketing Database');
+
+  const filteredEntries = (activeTab === 'priority' ? priorityEntries : marketingEntries).filter(entry => 
+    `${entry.originalText} ${entry.redactedText} ${entry.submissionId} ${entry.clientName}`
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase())
+  );
+
+  const toggleExpand = (id: string) => {
+    setExpandedId(prev => prev === id ? null : id);
+  };
+
+  const getPiiBadgeColors = (type: string) => {
+    switch (type.toUpperCase()) {
+      case 'CREDIT_CARD':
+        return "bg-orange-950/40 text-orange-400 border-orange-900/60";
+      case 'EMAIL':
+        return "bg-blue-950/40 text-blue-400 border-blue-900/60";
+      case 'PHONE':
+        return "bg-teal-950/40 text-teal-400 border-teal-900/60";
+      case 'HEALTH_ID':
+        return "bg-purple-950/40 text-purple-400 border-purple-900/60";
+      case 'NAME':
+        return "bg-pink-950/40 text-pink-400 border-pink-900/60";
+      case 'ADDRESS':
+        return "bg-amber-950/40 text-amber-400 border-amber-900/60";
+      default:
+        return "bg-slate-950 text-slate-400 border-slate-850";
+    }
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-800/80 p-6 rounded-xl mt-6 shadow-xl">
+      
+      {/* DB Header Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-5 mb-5 gap-4">
+        <div>
+          <h3 className="text-sm font-mono uppercase tracking-wider font-bold text-slate-200 flex items-center">
+            <Database className="w-4 h-4 text-indigo-400 mr-2" />
+            <span>Downstream Distributed Databases (Simulated)</span>
+          </h3>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-wide mt-1">
+            Scrubbed feed automatically segmented into distinct databases based on sentiment scores.
+          </p>
+        </div>
+        <button
+          onClick={onClearDb}
+          className="text-[10px] font-mono uppercase tracking-widest text-rose-400 hover:text-rose-300 flex items-center gap-1.5 transition bg-rose-950/30 hover:bg-rose-950/60 px-3 py-1.5 rounded border border-rose-900/60 cursor-pointer"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          <span>Purge Databases</span>
+        </button>
+      </div>
+
+      {/* Tabs and Search Filtering */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+        
+        {/* Database Switcher Tabs */}
+        <div className="flex bg-slate-950/60 border border-slate-850 p-1 rounded-lg">
+          <button
+            onClick={() => { setActiveTab('priority'); setExpandedId(null); }}
+            className={`px-4 py-2 text-xs font-mono font-bold uppercase rounded transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'priority' 
+                ? "bg-slate-900 border border-slate-800 text-rose-400 shadow-sm" 
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
+            <span>Priority Support Database</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+              activeTab === 'priority' ? "bg-rose-950/60 text-rose-400 border border-rose-900/40" : "bg-slate-900 text-slate-500"
+            }`}>
+              {priorityEntries.length}
+            </span>
+          </button>
+          
+          <button
+            onClick={() => { setActiveTab('marketing'); setExpandedId(null); }}
+            className={`px-4 py-2 text-xs font-mono font-bold uppercase rounded transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'marketing' 
+                ? "bg-slate-900 border border-slate-800 text-emerald-400 shadow-sm" 
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Marketing Database</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+              activeTab === 'marketing' ? "bg-emerald-950/60 text-emerald-400 border border-emerald-900/40" : "bg-slate-900 text-slate-500"
+            }`}>
+              {marketingEntries.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Database Search Box */}
+        <div className="relative w-full md:w-72">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={`Search ${activeTab === 'priority' ? 'Priority' : 'Marketing'} database...`}
+            className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-mono"
+          />
+        </div>
+      </div>
+
+      {/* Logs Table Output */}
+      <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+        {filteredEntries.length === 0 ? (
+          <div className="text-center py-16 text-slate-500 text-xs italic font-mono border border-dashed border-slate-800 rounded-xl">
+            No compliance files found matching active filters in simulated database partition.
+          </div>
+        ) : (
+          filteredEntries.map((entry) => {
+            const isExpanded = expandedId === entry.submissionId;
+            return (
+              <div 
+                key={entry.submissionId}
+                className="bg-slate-950 border border-slate-850 hover:border-slate-800 rounded-xl overflow-hidden transition"
+              >
+                {/* Summary Row */}
+                <div 
+                  onClick={() => toggleExpand(entry.submissionId)}
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer select-none"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`p-1.5 rounded shrink-0 border ${
+                      activeTab === 'priority' ? "bg-rose-950/30 border-rose-900/40 text-rose-400" : "bg-emerald-950/30 border-emerald-900/40 text-emerald-400"
+                    }`}>
+                      <Database className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-bold text-slate-400">{entry.submissionId}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">[{entry.clientName}]</span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1 line-clamp-1 italic leading-normal">
+                        "{entry.redactedText}"
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3.5 self-end sm:self-auto">
+                    <div className="text-right">
+                      <span className={`text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${
+                        entry.sentiment === 'Positive' 
+                          ? "bg-emerald-950/30 text-emerald-400 border-emerald-900/50" 
+                          : entry.sentiment === 'Negative' 
+                            ? "bg-rose-950/30 text-rose-400 border-rose-900/50" 
+                            : "bg-slate-950 text-slate-400 border-slate-850"
+                      }`}>
+                        SENTIMENT: {entry.sentiment} ({entry.sentimentScore.toFixed(1)})
+                      </span>
+                      <div className="text-[10px] text-slate-500 font-mono mt-1 flex items-center justify-end gap-1">
+                        <Clock className="w-3 h-3 text-slate-600" />
+                        <span>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                      </div>
+                    </div>
+                    {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+                  </div>
+                </div>
+
+                {/* Collapsible Detail Panel */}
+                {isExpanded && (
+                  <div className="p-4 border-t border-slate-850 bg-slate-950/30 space-y-4 text-xs font-mono">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      
+                      {/* Left: Original Payload */}
+                      <div>
+                        <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-500 mb-1.5">
+                          Original Submission Ingress
+                        </div>
+                        <div className="bg-slate-950 p-3 rounded-lg border border-slate-850 text-slate-400 leading-relaxed font-mono whitespace-pre-wrap select-all">
+                          {entry.originalText}
+                        </div>
+                      </div>
+
+                      {/* Right: Sanitized output */}
+                      <div>
+                        <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-500 mb-1.5">
+                          Sanitized Microservice Storage
+                        </div>
+                        <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-emerald-400 leading-relaxed font-mono whitespace-pre-wrap select-all">
+                          {entry.redactedText}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bottom Details (PII checklist + SLA label) */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-4 border-t border-slate-800/60">
+                      <div>
+                        <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-500 mb-2">
+                          Scrubbed Items Audit Trail ({entry.piiDetected.length})
+                        </div>
+                        {entry.piiDetected.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {entry.piiDetected.map((item, idx) => (
+                              <span key={idx} className={`px-2 py-1 rounded border font-mono text-[9px] flex items-center gap-1 ${getPiiBadgeColors(item.type)}`}>
+                                <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="font-bold">{item.type}</span>
+                                <span className="text-slate-500">({item.method})</span>
+                                <span>:</span>
+                                <span className="font-semibold">{item.value}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-500 italic">
+                            No sensitive data found / No redaction needed.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="shrink-0 self-start md:self-center">
+                        {activeTab === 'priority' ? (
+                          <div className="bg-rose-950/30 text-rose-400 border border-rose-900/50 px-3 py-2 rounded font-mono uppercase tracking-wide text-[10px] flex items-center gap-1.5">
+                            <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
+                            <span>SLA ALERT: HIGH PRIORITY TRIAGE PENDING</span>
+                          </div>
+                        ) : (
+                          <div className="bg-emerald-950/30 text-emerald-400 border border-emerald-900/50 px-3 py-2 rounded font-mono uppercase tracking-wide text-[10px] flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            <span>READY: ROUTED TO MARKETING STREAM</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

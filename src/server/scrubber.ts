@@ -1,7 +1,14 @@
+export interface PiiItem {
+  type: 'EMAIL' | 'PHONE' | 'CREDIT_CARD' | 'HEALTH_ID' | 'NAME' | 'ADDRESS';
+  value: string;
+  method: 'regex' | 'ai';
+}
+
 export interface ScrubResult {
   cleanText: string;
   redactedCount: number;
   categories: string[];
+  piiDetected: PiiItem[];
 }
 
 // Regex patterns for sensitive PII
@@ -20,33 +27,44 @@ export const PII_PATTERNS = {
 
 /**
  * Deterministically scrubs PII from text using high-fidelity regex patterns.
- * Ensures composite cases (multiple types of PII) are fully scrubbed to [REDACTED].
+ * Ensures composite cases (multiple types of PII) are fully scrubbed to specific tokens.
  */
 export function regexScrub(text: string): ScrubResult {
   let cleanText = text;
   let redactedCount = 0;
   const categories: string[] = [];
+  const piiDetected: PiiItem[] = [];
 
   // Helper to apply regex and record statistics
-  const applyRegex = (regex: RegExp, categoryName: string) => {
+  const applyRegex = (regex: RegExp, categoryName: string, token: string, typeName: 'EMAIL' | 'PHONE' | 'CREDIT_CARD' | 'HEALTH_ID') => {
     const matches = cleanText.match(regex);
     if (matches && matches.length > 0) {
       redactedCount += matches.length;
-      categories.push(categoryName);
-      cleanText = cleanText.replace(regex, '[REDACTED]');
+      if (!categories.includes(categoryName)) {
+        categories.push(categoryName);
+      }
+      matches.forEach(val => {
+        piiDetected.push({
+          type: typeName,
+          value: val.trim(),
+          method: 'regex'
+        });
+      });
+      cleanText = cleanText.replace(regex, token);
     }
   };
 
   // Run all scrubbers sequentially to handle composite cases
-  applyRegex(PII_PATTERNS.EMAIL, 'Email');
-  applyRegex(PII_PATTERNS.CREDIT_CARD, 'Credit Card');
-  applyRegex(PII_PATTERNS.PHONE_NUMBER, 'Phone Number');
-  applyRegex(PII_PATTERNS.HEALTH_ID_SSN, 'Health ID / SSN');
+  applyRegex(PII_PATTERNS.EMAIL, 'Email', '[REDACTED_EMAIL]', 'EMAIL');
+  applyRegex(PII_PATTERNS.CREDIT_CARD, 'Credit Card', '[REDACTED_CARD]', 'CREDIT_CARD');
+  applyRegex(PII_PATTERNS.PHONE_NUMBER, 'Phone Number', '[REDACTED_PHONE]', 'PHONE');
+  applyRegex(PII_PATTERNS.HEALTH_ID_SSN, 'Health ID / SSN', '[REDACTED_HEALTH_ID]', 'HEALTH_ID');
 
   return {
     cleanText,
     redactedCount,
     categories,
+    piiDetected,
   };
 }
 
