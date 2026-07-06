@@ -1,0 +1,76 @@
+{
+  "prioritySupport": [
+    {
+      "id": "fb_1783337600905_b5o1w",
+      "originalTextSummary": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is ****-****-****-4444 and my email is t***r@g***.com. Please resolve this immediately!",
+      "redactedText": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is [REDACTED] and my email is [REDACTED]. Please resolve this immediately!",
+      "sentiment": "negative",
+      "sentimentScores": {
+        "positive": 0.05,
+        "negative": 0.9,
+        "neutral": 0.05
+      },
+      "redactedPIICount": 2,
+      "detectedCategories": [
+        "Email",
+        "Credit Card"
+      ],
+      "routedTo": "Priority Support",
+      "timestamp": "2026-07-06T11:33:20.905Z"
+    }
+  ],
+  "marketing": [
+    {
+      "id": "fb_1783337600906_f396r",
+      "originalTextSummary": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN ***-**-6789 in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
+      "redactedText": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN [REDACTED] in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!",
+      "sentiment": "positive",
+      "sentimentScores": {
+        "positive": 0.9,
+        "negative": 0.05,
+        "neutral": 0.05
+      },
+      "redactedPIICount": 1,
+      "detectedCategories": [
+        "Health ID / SSN"
+      ],
+      "routedTo": "Marketing",
+      "timestamp": "2026-07-06T11:33:20.906Z"
+    }
+  ],
+  "generalArchive": [
+    {
+      "id": "fb_1783337600907_fty7z",
+      "originalTextSummary": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
+      "redactedText": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night.",
+      "sentiment": "neutral",
+      "sentimentScores": {
+        "positive": 0.1,
+        "negative": 0.1,
+        "neutral": 0.8
+      },
+      "redactedPIICount": 0,
+      "detectedCategories": [],
+      "routedTo": "General Archive",
+      "timestamp": "2026-07-06T11:33:20.907Z"
+    },
+    {
+      "id": "fb_1783337600905_g71s4",
+      "originalTextSummary": "Hello, I am a patient checking if member ID AB******CD is valid for this portal. You can contact me back on my home phone (***) ***-2045 during business hours. Thank you.",
+      "redactedText": "Hello, I am a patient checking if member ID [REDACTED] is valid for this portal. You can contact me back on my home phone [REDACTED] during business hours. Thank you.",
+      "sentiment": "neutral",
+      "sentimentScores": {
+        "positive": 0.1,
+        "negative": 0.1,
+        "neutral": 0.8
+      },
+      "redactedPIICount": 2,
+      "detectedCategories": [
+        "Phone Number",
+        "Health ID / SSN"
+      ],
+      "routedTo": "General Archive",
+      "timestamp": "2026-07-06T11:33:20.905Z"
+    }
+  ]
+}

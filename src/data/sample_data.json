@@ -1,0 +1,18 @@
+[
+  {
+    "description": "Composite PII with Negative Sentiment (Support Route)",
+    "feedback": "I am extremely upset. The new mobile payment option keeps crashing. I tried to transfer funds to my dad, but the transaction failed. My card number is 4111-2222-3333-4444 and my email is test.user@gmail.com. Please resolve this immediately!"
+  },
+  {
+    "description": "Healthcare PII with Neutral Sentiment (Archive Route)",
+    "feedback": "Hello, I am a patient checking if member ID AB123456CD is valid for this portal. You can contact me back on my home phone 555-891-2045 during business hours. Thank you."
+  },
+  {
+    "description": "Financial SSN PII with Positive Sentiment (Marketing Route)",
+    "feedback": "Your auto-invest feature is absolutely amazing! It has made saving so easy for me. I accidentally put my SSN 123-45-6789 in the support form earlier because I got confused, but your representative was incredibly helpful and fast. Love this app!"
+  },
+  {
+    "description": "Standard feedback without PII (General Archive Route)",
+    "feedback": "Could you add dark mode support to the main analytics page? The bright theme is a bit hard on the eyes at night."
+  }
+]

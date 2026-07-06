@@ -1,0 +1,6 @@
+{
+  "name": "Feedback Redaction & Routing",
+  "description": "A production-grade feedback ingestion pipeline that redacts sensitive PII and routes cleaned messages based on sentiment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
